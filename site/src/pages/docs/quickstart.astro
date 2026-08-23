@@ -1,0 +1,58 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="快速上手 — compressor 文档">
+  <article class="doc container">
+    <h1>快速上手</h1>
+    <p>compressor 以 npm 包 <code>@compressor/core</code> 提供 Node.js API,核心为纯 Rust(napi-rs 绑定)。安装时自动命中当前平台的二进制子包。</p>
+
+    <h2>安装</h2>
+    <pre><code is:raw>npm install @compressor/core</code></pre>
+
+    <h2>最小示例</h2>
+    <pre><code is:raw>import { compress, compressText, retrieve } from "@compressor/core";
+
+// 1. 压缩请求体:自动检测 Anthropic /v1/messages、
+//    OpenAI Chat Completions、OpenAI Responses 三种格式
+const { body, changed, tokensSaved } = compress(requestBody, "用户当前的问题");
+
+// 2. 或直接压缩单条字符串(如工具输出原文)
+const r = compressText(toolOutput, "error mismatched");
+
+if (r.lossy) {
+  // 有损:原文已入 CCR store,输出尾部带 «ccr:HASH» 标记
+  const original = retrieve(r.ccrKey!);
+}</code></pre>
+
+    <h2>API 一览</h2>
+    <h3><code>compress(body, query?)</code></h3>
+    <p>压缩请求 body(就地透传或压缩),返回:</p>
+    <table>
+      <tr><th>字段</th><th>说明</th></tr>
+      <tr><td><code>body</code></td><td>压缩后的请求 body(格式与输入一致)</td></tr>
+      <tr><td><code>changed</code></td><td>是否发生了实际压缩</td></tr>
+      <tr><td><code>blocksExamined / blocksCompressed / blocksReverted</code></td><td>检查 / 压缩 / 因 token 校验回退的 text block 数</td></tr>
+      <tr><td><code>frozenMessages</code></td><td>冻结前缀消息条数(cache 锚点,未被触碰;OpenAI 格式恒为 0)</td></tr>
+      <tr><td><code>ccrStored</code></td><td>写入 CCR store 的原文条数</td></tr>
+      <tr><td><code>tokensSaved</code></td><td>估算节省的 token 数</td></tr>
+    </table>
+
+    <h3><code>compressText(text, query?)</code></h3>
+    <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / ccrKey / tokensSaved</code>。内容类型自动检测分发,单 block 最小 512 字节才参与压缩。</p>
+
+    <h3><code>retrieve(key)</code></h3>
+    <p>按 <code>ccrKey</code> 从 CCR store 取回有损压缩的原文,端到端无损。</p>
+
+    <h3><code>detectContentType(text)</code> / <code>detectRequestFormat(body)</code></h3>
+    <p>类型探测:返回内容类型(JSON 数组 / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
+
+    <h2>什么时候传 query?</h2>
+    <p><code>query</code> 是相关性 query(如用户当前的问题)。日志、diff、纯文本等有损压缩器用它做 BM25 相关性打分,保留与任务相关的行,丢弃低相关内容。不传也能压缩,但保留策略更"盲"。</p>
+
+    <div class="doc-nav">
+      <a href="/docs/transforms">→ 各压缩器类型说明</a>
+      <a href="/docs/architecture">→ 三大不变量与架构</a>
+    </div>
+  </article>
+</BaseLayout>

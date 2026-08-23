@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/compressor-core", "crates/compressor-node"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order: 保持 JSON key 顺序，做字节级手术时必需
+# arbitrary_precision: 数字字面量原样保留，1.0 不塌缩成 1
+# raw_value: 未修改的 messages[*] 可按原始字节转发（cache SHA 不变）
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision", "raw_value"] }
+thiserror = "2"
+anyhow = "1"
+blake3 = "1"
+# napi-rs：Rust cdylib → Node 原生模块，npm 包 @compressor/core 的桥
+napi = { version = "2", default-features = false, features = ["napi4", "serde-json"] }
+napi-derive = "2"
+
+# tree-sitter + 各语言 grammar：CodeAwareCompressor 的 AST 感知代码压缩。
+# 版本 pin，保证 AST 解析 API 兼容。
+tree-sitter = "=0.25.2"
+tree-sitter-python = "=0.25.0"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-go = "=0.25.0"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-java = "=0.23.5"
+tree-sitter-c = "=0.24.2"
+tree-sitter-cpp = "=0.23.4"
+
+compressor-core = { path = "crates/compressor-core" }

@@ -1,0 +1,37 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="压缩器类型 — compressor 文档">
+  <article class="doc container">
+    <h1>压缩器类型</h1>
+    <p>compressor 按内容类型分发到专用压缩器(<code>detectContentType</code> 自动判断)。无损优先:先尝试无损重排(JSON minify、日志 Drain 模板化),缩小到 ≤80% 即短路;不够再走有损路径,原文入 CCR store。</p>
+
+    <table>
+      <tr><th>内容类型</th><th>压缩器</th><th>策略</th><th>无损?</th></tr>
+      <tr><td>json_array</td><td>SmartCrusher</td><td>schema 去重 + 采样 + 关键行保留(错误行优先)</td><td>可无损(minify)或有损</td></tr>
+      <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
+      <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
+      <tr><td>git_diff</td><td>DiffCompressor</td><td>unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
+      <tr><td>plain_text</td><td>TextCrusher</td><td>BM25 相关性 + 近重复折叠,支持中英文(CJK)</td><td>有损(可恢复)</td></tr>
+      <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,签名保留、函数体折叠</td><td>有损(可恢复)</td></tr>
+      <tr><td>html</td><td>—</td><td>检测支持,压缩当前 no-op</td><td>—</td></tr>
+    </table>
+
+    <h2>共用机制</h2>
+    <ul>
+      <li><strong>相关性 query</strong>:有损压缩器用 BM25 对行打分,与 query 相关的内容优先保留。</li>
+      <li><strong>保密检测</strong>:归一化 Shannon 熵 ≥0.85 且长度 ≥20 的片段(API key、凭证)强制不可丢弃。</li>
+      <li><strong>标签保护</strong>:自定义 XML 标签先占位保护、压缩后恢复,不会被压坏。</li>
+      <li><strong>混合内容</strong>同一 block 内含多种类型时,分段路由到各自的压缩器;嵌入的 JSON span 走递归平衡匹配。</li>
+      <li><strong>CCR 恢复</strong>:一切有损输出的原文都在 CCR store,输出留 <code>«ccr:HASH»</code> 标记,<code>retrieve(key)</code> 取回。</li>
+    </ul>
+
+    <p>首页演示里可以逐类型查看真实输入与压缩输出的左右对比。</p>
+
+    <div class="doc-nav">
+      <a href="/docs/quickstart">← 快速上手</a>
+      <a href="/docs/architecture">→ 三大不变量与架构</a>
+    </div>
+  </article>
+</BaseLayout>

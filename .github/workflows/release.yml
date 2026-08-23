@@ -1,0 +1,103 @@
+# 多平台 .node 编译与 npm 发布流水线。
+#
+# 触发：推送 `v*` tag（如 `git tag v0.1.0 && git push --tags`）。
+# 流程：
+#   1. build 矩阵：6 个目标平台各编一个 .node，上传 artifact
+#      （macOS 原生跑；linux 用 napi build --cross-compile + zig）
+#   2. release：下载全部 artifact，生成平台子包（gen-platform-packages.mjs），
+#      依次 publish 6 个 @compressor/core-<platform> 子包，再 publish 根包。
+#
+# 所需 secret：NPM_TOKEN（npm publish 权限，@compressor scope）。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            zig: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            zig: true
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            zig: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            zig: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # zig：linux 交叉链接器（cargo-zigbuild）
+      - if: matrix.zig
+        run: npm i -g zig@0.15.2
+      - name: Build .node
+        working-directory: npm/core
+        run: |
+          npm install
+          npx napi build --platform --release \
+            --manifest-path ../../crates/compressor-node/Cargo.toml \
+            --output-dir native \
+            ${{ matrix.zig && '--cross-compile' || '' }} \
+            --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.target }}
+          path: npm/core/native/*.node
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: npm/core/native
+          merge-multiple: true
+      - name: Build TS + generate platform packages
+        working-directory: npm/core
+        run: |
+          npm install
+          npm run build:ts
+          node ../../scripts/gen-platform-packages.mjs
+      - name: Publish platform packages
+        working-directory: npm/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # 先发 6 个平台子包，再发根包（根包 optionalDependencies 依赖它们）
+        run: |
+          for dir in platforms/*/; do
+            (cd "$dir" && npm publish --access public)
+          done
+      - name: Publish root package
+        working-directory: npm/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

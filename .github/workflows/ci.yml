@@ -1,0 +1,36 @@
+# CI：Rust 测试 + npm 包构建/冒烟测试（仅本机平台，不做交叉）。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
+
+  npm-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and test npm package
+        working-directory: npm/core
+        run: |
+          npm install
+          npm run build:native
+          npm test

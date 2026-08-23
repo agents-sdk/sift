@@ -1,0 +1,57 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="三大不变量与架构 — compressor 文档">
+  <article class="doc container">
+    <h1>三大不变量与架构</h1>
+    <p>任何改动不得违反的三条安全底线:</p>
+    <ol>
+      <li><strong>只在消息内压缩</strong>,绝不跨消息丢弃内容 —— 每条消息独立处理,tool_use / tool_result 配对受保护。</li>
+      <li><strong>冻结前缀字节不动</strong> —— <code>cache_control</code> 标记以下的消息是 prompt cache 锚点,压缩绝不触碰。</li>
+      <li><strong>有损压缩必须可恢复</strong> —— 原文进 CCR store,输出留 <code>«ccr:HASH»</code> 标记,端到端无损。</li>
+    </ol>
+
+    <h2>压缩管线</h2>
+    <pre><code is:raw>请求 body
+  │ detectRequestFormat ──→ anthropic / chat_completions / responses
+  │                        (floor = cache_control 冻结下界)
+  ▼
+逐消息 text block
+  │ detectContentType ──→ json_array / build_output / search_results /
+  │                      git_diff / source_code / plain_text / html
+  │ mixed_content:同一 block 内分段路由;嵌入 JSON span 递归处理
+  ▼
+无损重排(JsonMinifier / LogTemplate-Drain)─≤80%─→ 短路返回
+  ▼
+有损压缩(OffloadTransform)── 原文写 CCR store,输出留 «ccr:HASH»
+  ▼
+token 估算校验 ── 不达预期则回退原 block(blocksReverted)</code></pre>
+
+    <h2>工程结构</h2>
+    <pre><code is:raw>crates/
+  compressor-core/   # 压缩核心:纯逻辑 rlib,无 napi 依赖
+    tokenizer.rs / policy.rs / cache_control.rs / safety.rs
+    content.rs / ccr.rs / secrets.rs / mixed_content.rs
+    relevance.rs (BM25) / signals.rs (行重要性)
+    transforms/    # 各压缩器 + 无损重排 + 标签保护
+    formats/       # 三请求格式适配层
+    text_api.rs / live_zone.rs
+  compressor-node/   # napi-rs cdylib 桥(只做类型桥接,不含逻辑)
+npm/core/            # npm 包 @compressor/core(TypeScript)
+docs/PROJECT_MAP.md  # 模块职责 / 压缩管线 / 发布链 全图</code></pre>
+
+    <h2>设计取舍</h2>
+    <ul>
+      <li><strong>纯逻辑核心</strong>:压缩逻辑只进 <code>compressor-core</code>,node 桥零逻辑 —— 核心可复用(wasm、CLI 皆可接)。</li>
+      <li><strong>无损优先短路</strong>:能无损解决就不引入信息损失,≤80% 是短路阈值。</li>
+      <li><strong>token 校验兜底</strong>:有损结果要过 token 估算校验,不达预期自动回退原 block。</li>
+      <li><strong>缓存成本感知</strong>:policy 含缓存成本乘数,压缩决策考虑 prompt cache 经济学。</li>
+    </ul>
+
+    <div class="doc-nav">
+      <a href="/docs/transforms">← 压缩器类型</a>
+      <a href="/docs/use-cases">→ 使用场景与最佳实践</a>
+    </div>
+  </article>
+</BaseLayout>

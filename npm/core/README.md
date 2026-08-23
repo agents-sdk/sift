@@ -1,0 +1,183 @@
+# @compressor/core
+
+LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 LLM API **之前**，就地压缩
+消息里的大型工具输出，节省 token 与成本；被压缩的原文卸载进进程内 CCR store，可随时
+按标记取回，保证端到端无损。
+
+- 纯 Rust 核心（`compressor-core`）+ napi-rs 桥
+- 支持三种请求格式（自动检测）：Anthropic `/v1/messages`、OpenAI Chat
+  Completions、OpenAI Responses API
+- 另有 `compressText`：对单条字符串（如工具输出原文）直接压缩
+- 消息内压缩 + 冻结前缀保护 + CCR 可恢复，三大不变量见 [PROJECT_MAP](../../docs/PROJECT_MAP.md)
+
+## 安装（本地构建）
+
+尚未发布到 npm registry。本地构建后用：
+
+```sh
+cd npm/core
+npm install
+npm run build        # 本机平台
+# 或 npm run build:cross   # 交叉编译全部 6 平台（需 zig）
+```
+
+产物：`dist/`（TS 编译）+ `native/compressor.<platform-triple>.node`。发布后即可
+`npm install @compressor/core`。
+
+## 运行场景演示
+
+仓库内提供了覆盖 JSON 数组、pretty JSON、构建日志、搜索结果、git diff、混合命令
+输出、源代码和纯文本的 8 个独立用例。它通过包根目录加载 `@compressor/core` 的公开入口，
+每个用例都会完整打印「压缩前原文」「压缩后输出」「运行指标」，并验证 CCR 恢复和
+冻结前缀保护：
+
+```sh
+cd npm/core
+npm run build:native  # 首次运行或 Rust 代码变更后执行
+npm run demo -- --list       # 查看用例名称
+npm run demo -- json-array   # 单独运行一个用例
+npm run demo                 # 按顺序运行全部用例
+npm run demo -- --save       # 运行全部并分别保存到 demo/results/
+```
+
+演示会打印每个场景压缩前后的完整内容、字节数、压缩比、节省 token 和验证结果；CCR
+数据写入系统临时目录，不会使用正式的 `~/.compressor/ccr`。
+
+## 快速开始
+
+```ts
+import { compress, retrieve } from '@compressor/core';
+
+// 1. 压缩（发送前）
+const result = compress(requestBody, userQuery);
+
+// 2. 把压缩后的 body 发给 LLM API
+const response = await client.messages.create({
+  ...requestBody,
+  messages: (result.body as any).messages,
+});
+
+// 3. 如需恢复原文：从压缩文本里提取 <<ccr:KEY>>，取回
+const key = extractCcrKey(result.body);
+const original = retrieve(key); // string | null
+```
+
+## API
+
+### `compress(body, query?)`
+
+就地压缩 body 的 **live zone**（最后一条 user 消息及之前、冻结前缀之后的可变区）。
+格式自动检测（[`detectRequestFormat`](#detectrequestformatbody)）：
+
+| 格式 | 压缩候选 |
+|---|---|
+| Anthropic `/v1/messages` | `messages[*].content[*]` 的 text block `text` / tool_result `content` |
+| OpenAI Chat Completions | `messages[*].content` 字符串、parts 数组的 `text` part、`role:"tool"` 消息的 `content` |
+| OpenAI Responses API | `input[*]` 的 `input_text`/`output_text` part `text`、`function_call_output` 的 `output` |
+
+模型发出的结构化调用（`tool_calls`、`function_call`）不会被动。OpenAI 格式没有
+`cache_control` 前缀锚点，`frozenMessages` 恒为 0（live zone 从头开始）。
+
+- `body`：请求体对象（上述三种格式之一）
+- `query?`：当前用户 query，供相关性锚点压缩器优先保留相关行（可空）
+
+返回 `CompressResult`：
+
+| 字段 | 含义 |
+|---|---|
+| `body` | 压缩后的 messages body（压缩文本尾部带 `<<ccr:KEY>>` 标记） |
+| `changed` | 是否发生实际压缩 |
+| `blocksExamined` / `blocksCompressed` / `blocksReverted` | 检查 / 压缩 / 回退的 block 数 |
+| `frozenMessages` | 冻结前缀条数（cache 锚点，未触碰） |
+| `ccrStored` | 写入 CCR store 的原文条数 |
+| `tokensSaved` | 估算节省的 token 数 |
+
+### `retrieve(key)`
+
+按 `<<ccr:KEY>>` 里的 key 取回压缩时卸载的原文，返回 `string | null`。
+`null` 表示 key 不存在或已过期（见「限制」）。
+
+### `compressText(text, query?)`
+
+压缩单个字符串（不包请求体），适合在把工具输出原文送进任意 API / 存储之前处理。
+返回 `{ text, changed, lossy, ccrKey, tokensSaved }`：有损时 `text` 尾部带
+`<<ccr:KEY>>` 标记、`ccrKey` 非空，可用 `retrieve(ccrKey)` 取回原文；无损压缩
+（如 JSON minify）时 `lossy` 为 `false` 且无标记。小于 512 字节的输入直接透传。
+
+### `detectRequestFormat(body)`
+
+返回 `'anthropic' | 'chat_completions' | 'responses' | 'unknown'`。
+无法判别时（如全部 content 为纯字符串）默认按 Anthropic 处理——无
+`cache_control` 时两种格式行为等价。
+
+### `detectContentType(text)`
+
+返回内容类型：`json_array | build_output | search_results | git_diff | source_code | plain_text | html`，便于诊断。
+
+## 什么时候调用 `compress`
+
+一句话：**在任何 LLM 客户端把请求发给 API 之前，对 messages 做一次拦截压缩**。
+
+收益最大的场景，是消息里含以下**大型工具输出**（这几类有专门压缩器）：
+
+| 内容 | 示例 | 压缩器 |
+|---|---|---|
+| JSON 数组 | `ls`/API 返回的对象列表、数据库查询结果 | smart_crusher（schema 去重、采样、错误行保留） |
+| 构建/测试日志 | `pytest`/`npm`/`cargo`/`jest` 输出 | log_compressor（错误/堆栈/摘要保留） |
+| grep/ripgrep 结果 | 代码搜索结果 | search_compressor（按文件/分数抽稀） |
+| git diff | `git diff` / PR diff | diff_compressor（hunk 采样） |
+
+适合的接入位置：
+
+- **代理 / 中间件**：放在 LLM 客户端与 API 之间对出站请求统一压缩。
+- **应用层发送前**：直接 SDK 调用前，把 `messages` 传给 `compress`。
+- **边缘函数 / 无服务器**：发送前压缩，降低首字节与计费 token。
+
+**不需要调用**的情况：
+
+- 消息都很小：单个文本块 < 512 字节会自动跳过（`MIN_BLOCK_BYTES`）。
+- 纯文本 / 源代码 / HTML：当前是 no-op（无可压的专用压缩器）。
+- 没有 CCR store 的场景：`compress` 依赖进程内 store 才能卸载原文（见下）。
+
+## 有损压缩与恢复（CCR）
+
+压缩是有损的（丢弃了部分行/样本），但原文会被卸载进 CCR store，压缩文本尾部追加
+`<<ccr:KEY>>` 标记，其中 `KEY` 是原文的 BLAKE3 哈希（24 hex）。
+
+```
+原文 ──compress──▶ 压缩文本 + <<ccr:KEY>>        （发给 API，省 token）
+                        │
+                        └── store.put(KEY, 原文)   （留在进程内）
+
+需要原文时：从消息里找 <<ccr:KEY>> → retrieve(KEY) → 原文
+```
+
+典型恢复流程：模型看到压缩内容后说「我需要看完整数据」，应用从最近的压缩消息里
+提取 `<<ccr:KEY>>`，`retrieve` 取回原文，把原文补发给模型。
+
+提取 key 的辅助：
+
+```ts
+const CCR_RE = /<<ccr:([0-9a-f]+)>>/g;
+function extractCcrKeys(body: any): string[] {
+  const text = JSON.stringify(body);
+  return [...text.matchAll(CCR_RE)].map((m) => m[1]);
+}
+```
+
+## 与 prompt cache 的关系（cache 安全）
+
+`compress` 只改 **live zone**（冻结前缀之后、最后一条 user 消息为止的可变区）。
+`cache_control` 标记以下的**冻结前缀字节不动**，因此不会破坏 prompt cache 的命中。
+`result.frozenMessages` 报告了被保护的冻结条数。
+
+## 限制
+
+- **CCR store 是落盘文件**（`FileCcrStore`）：每个 key 一个文件，默认目录
+  `~/.compressor/ccr`（环境变量 `COMPRESSOR_CCR_DIR` 可覆盖），TTL 1800 秒（按文件
+  mtime 判定，`get` 时惰性删除过期项）。单机重启不丢、同机多进程互见。
+  **多实例 / 集群**需把该目录挂到共享文件系统（NFS / 对象存储），或改用外部
+  store 后端（Redis 等，`CcrStore` trait 已抽象好），否则不同机器取不到对方的原文。
+- 压缩的是**已解析的 JSON 对象**，不是原始 HTTP 字节。若在代理层做「字节级 cache SHA
+  不变」的区间手术，需在更高层处理（见 PROJECT_MAP 待办）。
+- 当前 `tokensSaved` 用字节/4 × 1.2 粗估，仅作参考。

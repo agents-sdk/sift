@@ -1,0 +1,12 @@
+compressor
+Copyright 2026 compressor Contributors
+
+This product includes software developed by the compressor Contributors.
+
+Based on Headroom (https://github.com/chopratejas/headroom)
+Copyright 2025 Headroom Contributors
+Licensed under the Apache License, Version 2.0
+
+This product is a derivative work of Headroom's compression core,
+reimplemented in Rust. Portions of the design and tests are derived from
+the Headroom source code, licensed under the Apache License, Version 2.0.

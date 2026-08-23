@@ -1,0 +1,86 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Demo from '../components/Demo';
+---
+
+<BaseLayout>
+  <section class="hero container">
+    <div class="hero-grid">
+      <div>
+        <span class="eyebrow">LLM Context Compressor · Rust</span>
+        <h1>同样的上下文,<br /><span class="shrink">更少的 token</span></h1>
+        <p class="lede">
+          发给模型之前,把日志、JSON、diff、搜索结果先压一遍:错误保留、样板折叠、
+          冻结前缀一字节不动,有损内容随时可还原。省下的是每一轮的 token 与缓存成本。
+        </p>
+        <div class="hero-cta">
+          <a href="#demo" class="btn btn-primary">看压缩效果 →</a>
+          <span class="hero-install">npm i <code>@compressor/core</code></span>
+        </div>
+      </div>
+
+      <div class="fold-card" aria-hidden="true">
+        <div class="fold-head">
+          <span>tool_output.txt</span>
+          <span>compressText()</span>
+        </div>
+        <div class="fold-lines">
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+          <div class="fold-line"></div>
+        </div>
+        <div class="fold-foot">
+          <div class="fold-ratio">
+            <span class="bar before"></span>
+            <span class="bar after"></span>
+            <span class="num">−67%</span>
+          </div>
+          <span>4,212 → 1,401 tok</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="demo-section container" id="demo">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Live Demo</span>
+        <h2 class="section-title">亲手压一压</h2>
+      </div>
+    </div>
+    <Demo client:load />
+  </section>
+
+  <section class="invariants-section container">
+    <span class="eyebrow">设计底线</span>
+    <h2 class="section-title" style="margin-bottom:26px">三条不变量</h2>
+    <div class="invariant-rule">
+      <span class="inv-no">RULE 01</span>
+      <div>
+        <h3>只在消息内压缩</h3>
+        <p>绝不跨消息丢弃内容。每条消息独立处理,tool_use / tool_result 配对受保护,对话结构永远完整。</p>
+      </div>
+    </div>
+    <div class="invariant-rule">
+      <span class="inv-no">RULE 02</span>
+      <div>
+        <h3>冻结前缀字节不动</h3>
+        <p>cache_control 标记以下的消息是 prompt cache 锚点,一个字节都不动 —— 压缩不破坏你的缓存命中。</p>
+      </div>
+    </div>
+    <div class="invariant-rule">
+      <span class="inv-no">RULE 03</span>
+      <div>
+        <h3>有损必须可恢复</h3>
+        <p>有损压缩的原文进 CCR store,输出留 «ccr:HASH» 标记,随时取回,端到端无损。</p>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

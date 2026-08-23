@@ -1,0 +1,9 @@
+references
+/target
+npm/core/native/*.node
+npm/core/dist
+npm/core/dist-test
+npm/core/platforms
+node_modules
+.DS_Store
+.vercel

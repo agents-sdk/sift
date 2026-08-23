@@ -1,0 +1,51 @@
+---
+// 全站基础布局:导航 + 内容 + 页脚
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title = 'compressor — LLM 上下文压缩', description = '压缩 LLM 对话上下文,节省 token 与缓存成本。消息内压缩、冻结前缀不动、有损可恢复。' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container">
+        <a href="/" class="logo"><span class="glyph">⌁</span> compressor</a>
+        <nav class="site-nav">
+          <a href="/">首页</a>
+          <a href="/docs/quickstart">快速上手</a>
+          <a href="/docs/transforms">压缩器</a>
+          <a href="/docs/architecture">架构</a>
+          <a href="/docs/use-cases">使用场景</a>
+          <a href="https://github.com/liangshuai/compressor">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main>
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="container">
+        <span>compressor — 纯 Rust 的 LLM 上下文压缩 · Apache-2.0(初始设计参考 headroom,见 NOTICE)</span>
+        <span>内置演示样本由真实压缩核心预生成;自定义输入经 Vercel Function 实时压缩</span>
+      </div>
+    </footer>
+  </body>
+</html>

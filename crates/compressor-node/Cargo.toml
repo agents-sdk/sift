@@ -1,0 +1,16 @@
+[package]
+name = "compressor-node"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "@compressor/core 的 Node 原生模块：napi-rs 桥接到 compressor-core"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+compressor-core.workspace = true
+napi.workspace = true
+napi-derive.workspace = true
+serde_json.workspace = true

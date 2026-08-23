@@ -1,0 +1,8 @@
+{
+  "name": "@compressor/core",
+  "version": "0.1.0",
+  "description": "LLM 上下文压缩工具(本地 vendored 副本,供官网 API 使用)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "Apache-2.0"
+}
