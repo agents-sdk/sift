@@ -8,6 +8,11 @@ interface Props {
 }
 
 const { title = 'compressor — LLM 上下文压缩', description = '压缩 LLM 对话上下文,节省 token 与缓存成本。消息内压缩、冻结前缀不动、有损可恢复。' } = Astro.props;
+
+// 当前页导航高亮:首页精确匹配,文档按前缀匹配
+const path = Astro.url.pathname;
+const isActive = (href: string) =>
+  href === '/' ? path === '/' : (path + '/').startsWith(href + '/');
 ---
 
 <!doctype html>
@@ -27,14 +32,12 @@ const { title = 'compressor — LLM 上下文压缩', description = '压缩 LLM 
   <body>
     <header class="site-header">
       <div class="container">
-        <a href="/" class="logo"><span class="glyph">⌁</span> compressor</a>
+        <a href="/" class="logo"><span class="glyph">⌁</span> compressor <span class="ver">v0.1</span></a>
         <nav class="site-nav">
-          <a href="/">首页</a>
-          <a href="/docs/quickstart">快速上手</a>
-          <a href="/docs/transforms">压缩器</a>
-          <a href="/docs/architecture">架构</a>
-          <a href="/docs/use-cases">使用场景</a>
-          <a href="https://github.com/liangshuai/compressor">GitHub</a>
+          <a href="/" aria-current={isActive('/') ? 'page' : undefined}>首页</a>
+          <a href="/docs/quickstart" aria-current={isActive('/docs/quickstart') ? 'page' : undefined}>快速上手</a>
+          <a href="/docs/how-it-works" aria-current={isActive('/docs/how-it-works') ? 'page' : undefined}>工作原理</a>
+          <a class="github" href="https://github.com/liangshuai/compressor">GitHub ↗</a>
         </nav>
       </div>
     </header>
@@ -43,9 +46,50 @@ const { title = 'compressor — LLM 上下文压缩', description = '压缩 LLM 
     </main>
     <footer class="site-footer">
       <div class="container">
-        <span>compressor — 纯 Rust 的 LLM 上下文压缩 · Apache-2.0(初始设计参考 headroom,见 NOTICE)</span>
-        <span>内置演示样本由真实压缩核心预生成;自定义输入经 Vercel Function 实时压缩</span>
+        <span>© 2026 compressor · Apache-2.0 开源</span>
+        <nav class="footer-nav">
+          <a href="/docs/quickstart">快速上手</a>
+          <a href="/docs/how-it-works">工作原理</a>
+          <a href="https://github.com/liangshuai/compressor">GitHub ↗</a>
+        </nav>
       </div>
     </footer>
+
+    <script>
+      // 复制按钮图标:剪贴板 / 完成
+      const ICON_COPY = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4.5" width="8" height="10" rx="1.5"/><path d="M10.5 4.5v-1a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v8A1.5 1.5 0 0 0 4 13h1"/></svg>`;
+      const ICON_DONE = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5"/></svg>`;
+
+      // 为安装命令等行内代码片段挂复制按钮(data-copy 属性声明原文)
+      document.querySelectorAll<HTMLElement>('[data-copy]').forEach((el) => {
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.innerHTML = ICON_COPY;
+        btn.setAttribute('aria-label', '复制命令');
+        btn.onclick = () => {
+          navigator.clipboard?.writeText(el.dataset.copy || '').then(() => {
+            btn.innerHTML = ICON_DONE;
+            btn.classList.add('done');
+            setTimeout(() => { btn.innerHTML = ICON_COPY; btn.classList.remove('done'); }, 1400);
+          });
+        };
+        el.appendChild(btn);
+      });
+
+      // CodeBlock 上的复制按钮(data-code 在容器上)
+      document.querySelectorAll<HTMLElement>('.codeblock .copy-btn').forEach((btn) => {
+        const host = btn.closest('.codeblock') as HTMLElement | null;
+        if (!host || btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.innerHTML = ICON_COPY;
+        btn.onclick = () => {
+          navigator.clipboard?.writeText(host.dataset.code || '').then(() => {
+            btn.innerHTML = ICON_DONE;
+            btn.classList.add('done');
+            setTimeout(() => { btn.innerHTML = ICON_COPY; btn.classList.remove('done'); }, 1400);
+          });
+        };
+      });
+    </script>
   </body>
 </html>

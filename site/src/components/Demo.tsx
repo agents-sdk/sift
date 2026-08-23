@@ -3,6 +3,28 @@
 import { useMemo, useState } from 'react';
 import samples from '../data/samples.json';
 
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className={done ? 'copy-btn done' : 'copy-btn'}
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1400);
+        });
+      }}
+      aria-label="复制内容"
+    >
+      {done ? (
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5"/></svg>
+      ) : (
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="4.5" width="8" height="10" rx="1.5"/><path d="M10.5 4.5v-1a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v8A1.5 1.5 0 0 0 4 13h1"/></svg>
+      )}
+    </button>
+  );
+}
+
 interface Sample {
   type: string;
   label: string;
@@ -182,13 +204,17 @@ export default function Demo() {
       {stats && (
         <div className="panes">
           <div className="pane">
-            <div className="pane-head">原始输入</div>
+            <div className="pane-head">
+              <span className="pane-title"><span className="dot" />原始输入</span>
+              <CopyButton text={orig} />
+            </div>
             <pre>{orig}</pre>
           </div>
           <div className="pane compressed">
             <div className="pane-head">
-              压缩输出
+              <span className="pane-title"><span className="dot" />压缩输出</span>
               {stats.ccrKey && <code className="ccr">«ccr:{stats.ccrKey.slice(0, 12)}…»</code>}
+              <CopyButton text={comp} />
             </div>
             <pre>{comp}</pre>
           </div>

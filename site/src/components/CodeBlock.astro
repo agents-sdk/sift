@@ -1,0 +1,56 @@
+---
+// 构建期 Shiki 高亮代码块:自定义浅色主题贴合设计系统(绿/陶土/金语义色)。
+// 语言用细粒度导入(打包小、解析可靠);lang 传 'text' 时不高亮,仅等宽排版。
+import { createHighlighterCore, createJavaScriptRegexEngine } from 'shiki';
+import bash from 'shiki/langs/bash.mjs';
+import ts from 'shiki/langs/typescript.mjs';
+
+interface Props {
+  code: string;
+  lang?: string;
+  label?: string;      // 左上角标签:命令名或文件类型
+  command?: boolean;   // 命令行:显示 $ 前缀与专用复制按钮
+}
+
+const { code, lang = 'text', label, command = false } = Astro.props;
+
+const langMap: Record<string, any> = { bash, ts, typescript: ts };
+
+// 自定义浅色主题:沿用全站色板
+const theme = {
+  name: 'compressor-light',
+  type: 'light' as const,
+  colors: { 'editor.background': '#ffffff', 'editor.foreground': '#171b1e' },
+  settings: [
+    { settings: { foreground: '#171b1e', background: '#ffffff' } },
+    { scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: '#8a918c', fontStyle: 'italic' } },
+    { scope: ['string', 'string.quoted'], settings: { foreground: '#0a5039' } },
+    { scope: ['keyword', 'storage.type', 'storage.modifier'], settings: { foreground: '#bf4430' } },
+    { scope: ['entity.name.function', 'support.function', 'entity.name.tag'], settings: { foreground: '#0e6b4f' } },
+    { scope: ['constant.numeric', 'constant.language'], settings: { foreground: '#9a7514' } },
+    { scope: ['entity.name.type', 'support.type', 'support.class'], settings: { foreground: '#9a7514' } },
+    { scope: ['punctuation', 'meta.brace'], settings: { foreground: '#5c635f' } },
+    { scope: ['operator'], settings: { foreground: '#5c635f' } },
+  ],
+};
+
+const useLang = langMap[lang];
+const hl = await createHighlighterCore({
+  engine: createJavaScriptRegexEngine({ forgiving: true }),
+  themes: [theme],
+  langs: useLang ? [useLang] : [],
+});
+
+const html = useLang
+  ? hl.codeToHtml(code.trim(), { lang, theme: 'compressor-light' })
+  : `<pre class="shiki"><code>${code.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`;
+---
+
+<div class={`codeblock${command ? ' command' : ''}`} data-code={code.trim()}>
+  {command && <span class="cmd-prompt" aria-hidden="true">$</span>}
+  {label && <span class="codeblock-label">{label}</span>}
+  <Fragment set:html={html} />
+  <button class="copy-btn" type="button" aria-label="复制代码">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4.5" width="8" height="10" rx="1.5"/><path d="M10.5 4.5v-1a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v8A1.5 1.5 0 0 0 4 13h1"/></svg>
+  </button>
+</div>
