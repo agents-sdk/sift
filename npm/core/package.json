@@ -1,6 +1,6 @@
 {
   "name": "@agent-context/sift",
-  "version": "0.0.1-alpha.2",
+  "version": "0.0.1-alpha.3",
   "description": "LLM 上下文压缩核心（Rust sift 的 Node 绑定）",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -42,11 +42,11 @@
   },
   "license": "Apache-2.0",
   "optionalDependencies": {
-    "@agent-context/sift-darwin-arm64": "0.0.1-alpha.2",
-    "@agent-context/sift-darwin-x64": "0.0.1-alpha.2",
-    "@agent-context/sift-linux-arm64-gnu": "0.0.1-alpha.2",
-    "@agent-context/sift-linux-arm64-musl": "0.0.1-alpha.2",
-    "@agent-context/sift-linux-x64-gnu": "0.0.1-alpha.2",
-    "@agent-context/sift-linux-x64-musl": "0.0.1-alpha.2"
+    "@agent-context/sift-darwin-arm64": "0.0.1-alpha.3",
+    "@agent-context/sift-darwin-x64": "0.0.1-alpha.3",
+    "@agent-context/sift-linux-arm64-gnu": "0.0.1-alpha.3",
+    "@agent-context/sift-linux-arm64-musl": "0.0.1-alpha.3",
+    "@agent-context/sift-linux-x64-gnu": "0.0.1-alpha.3",
+    "@agent-context/sift-linux-x64-musl": "0.0.1-alpha.3"
   }
 }
