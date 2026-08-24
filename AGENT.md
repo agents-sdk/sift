@@ -30,6 +30,15 @@ build 矩阵编各平台 → 生成 `@agent-context/sift-<platform>` 子包 → 
 - `crates/sift-node`：napi-rs cdylib 桥（→ `npm/core/native/sift.node`）
 - `npm/core`：npm 包 **@agent-context/sift**（TypeScript），源码在 `src/`，tsc 产出到 `dist/`
 
+## 核心 API 与官网联动约束
+
+- 修改 `@agent-context/sift` 的公开 API（新增、删除、重命名、签名或行为变化）时，必须在同一任务中同步更新
+  `README.md`、`npm/core/README.md`、`docs/PROJECT_MAP.md` 和 `site/src/pages/docs/` 下对应的官网文档与示例。
+- 如果官网运行时代码使用了新增或变化的 API，还必须同步 `site/vendor/sift`，确保官网 serverless API
+  实际加载的 vendored 包与文档一致。
+- `site/` 下用于上线的内容修改完成后，必须先执行 `cd site && npm run build`，再发布到已绑定的 Vercel
+  production 项目，并验证生产 URL 可访问；没有完成生产发布与验证，不得把官网更新报告为完成。
+
 ## 约定
 
 - 逻辑只进 `sift`；`sift-node` 只做类型桥接，不含压缩逻辑

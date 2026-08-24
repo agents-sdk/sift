@@ -64,6 +64,24 @@ const original = retrieve(key); // string | null
 
 ## API
 
+### `createSift({ stashDir })`
+
+创建绑定到独立 stash 目录的 API 实例。该实例的 `siftRequest`、`siftText` 和 `retrieve`
+始终使用传入的目录，不受 `SIFT_STASH_DIR` 影响；相对路径按调用 `createSift` 时的工作目录
+解析。
+
+```ts
+import { createSift } from '@agent-context/sift';
+
+const sift = createSift({ stashDir: '/var/lib/my-app/sift-stash' });
+const result = sift.siftText(toolOutput);
+const original = result.stashKey ? sift.retrieve(result.stashKey) : null;
+```
+
+每次调用 `createSift` 都会创建独立实例，因此同一 Node.js 进程可以同时使用多个 stash
+目录。直接导入的顶层 `siftRequest`、`siftText` 和 `retrieve` 保持原有行为，继续使用
+`SIFT_STASH_DIR`、`~/.sift/stash`、系统临时目录这一默认优先级。
+
 ### `siftRequest(body, query?)`
 
 就地压缩 body 中冻结前缀之外的**工具输出**。system/user/assistant prompt 默认保护；
@@ -178,7 +196,8 @@ function extractStashKeys(body: any): string[] {
 
 - **stash store 是落盘文件**（`FileStashStore`）：每个 key 一个文件，默认目录
   `~/.sift/stash`（环境变量 `SIFT_STASH_DIR` 可覆盖），TTL 1800 秒（按文件
-  mtime 判定，`get` 时惰性删除过期项）。单机重启不丢、同机多进程互见。
+  mtime 判定，`get` 时惰性删除过期项）；也可以通过 `createSift({ stashDir })` 为实例指定
+  独立目录。单机重启不丢、同机多进程互见。
   **多实例 / 集群**需把该目录挂到共享文件系统（NFS / 对象存储），或改用外部
   store 后端（Redis 等，`StashStore` trait 已抽象好），否则不同机器取不到对方的原文。
 - 压缩的是**已解析的 JSON 对象**，不是原始 HTTP 字节。若在代理层做「字节级 cache SHA

@@ -25,7 +25,7 @@ npm install @agent-context/sift
 ```
 
 ```ts
-import { siftRequest, siftText, retrieve } from "@agent-context/sift";
+import { createSift, siftRequest, siftText, retrieve } from "@agent-context/sift";
 
 // 请求体压缩（自动检测 Anthropic / OpenAI 格式）
 const { body, changed, tokensSaved } = siftRequest(requestBody, "用户当前的问题");
@@ -35,6 +35,11 @@ const r = siftText(toolOutput);
 
 // 有损压缩的原文可按标记取回
 const original = retrieve(r.stashKey!);
+
+// 如需独立 stash 目录，创建绑定到该目录的实例
+const isolatedSift = createSift({ stashDir: "/var/lib/my-app/sift-stash" });
+const isolated = isolatedSift.siftText(toolOutput);
+const isolatedOriginal = isolatedSift.retrieve(isolated.stashKey!);
 ```
 
 完整 API 说明见 [`npm/core/README.md`](npm/core/README.md)。

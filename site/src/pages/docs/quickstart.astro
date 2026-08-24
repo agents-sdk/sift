@@ -13,7 +13,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <CodeBlock code={`npm install @agent-context/sift`} lang="bash" command />
 
     <h2>最小示例</h2>
-    <CodeBlock code={`import { siftRequest, siftText, retrieve } from "@agent-context/sift";
+    <CodeBlock code={`import { createSift, siftRequest, siftText, retrieve } from "@agent-context/sift";
 
 // 1. 压缩请求体:自动检测 Anthropic /v1/messages、
 //    OpenAI Chat Completions、OpenAI Responses 三种格式
@@ -26,6 +26,20 @@ if (r.lossy) {
   // 有损:原文已入 stash store,输出尾部带 «stash:HASH» 标记
   const original = retrieve(r.stashKey!);
 }`} lang="ts" />
+
+    <h2>指定 stash 目录</h2>
+    <p>直接导入的 <code>siftRequest</code>、<code>siftText</code> 和 <code>retrieve</code> 使用共享的默认 store:优先读取 <code>SIFT_STASH_DIR</code>,其次是 <code>~/.sift/stash</code>,最后才回退到系统临时目录。如果应用需要隔离租户、任务或测试数据,用 <code>createSift</code> 创建绑定到指定目录的实例:</p>
+    <CodeBlock code={`import { createSift } from "@agent-context/sift";
+
+const sift = createSift({
+  stashDir: "/var/lib/my-app/sift-stash",
+});
+
+const result = sift.siftText(toolOutput, "error mismatched");
+const original = result.stashKey
+  ? sift.retrieve(result.stashKey)
+  : null;`} lang="ts" />
+    <p><code>stashDir</code> 必须是非空字符串;相对路径按调用 <code>createSift</code> 时的工作目录解析。每次调用都会创建独立实例,所以同一 Node.js 进程可以同时使用多个 stash 目录。压缩和恢复要使用同一个实例,顶层 <code>retrieve</code> 不会读取实例的独立目录。</p>
 
     <h2>典型场景</h2>
 
@@ -57,6 +71,9 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     </ul>
 
     <h2>API 一览</h2>
+    <h3><code>createSift(&#123; stashDir &#125;)</code></h3>
+    <p>创建绑定到独立 stash 目录的 API 实例。实例提供 <code>siftRequest</code>、<code>siftText</code>、<code>retrieve</code>、<code>detectContentType</code> 和 <code>detectRequestFormat</code>;不影响直接导入的顶层 API 及其默认目录逻辑。</p>
+
     <h3><code>siftRequest(body, query?)</code></h3>
     <p>压缩请求 body(就地透传或压缩),返回:</p>
     <table>
@@ -82,6 +99,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <ul>
       <li><strong>总是传 query</strong>:用户当前的问题、Agent 当前步骤的意图。相关性打分依赖它,不传则保留策略更"盲"。</li>
       <li><strong>保留 stashKey</strong>:有损压缩的原文在 stash store 里,把 key 记下来,模型追问细节时用 <code>retrieve(key)</code> 取回原文再注入,端到端无损。</li>
+      <li><strong>成对使用实例 API</strong>:通过 <code>createSift</code> 压缩后,必须通过同一实例的 <code>retrieve</code> 恢复;顶层 API 和其他实例可能指向不同目录。</li>
       <li><strong>不用担心理解偏差</strong>:压缩只发生在消息内部,对话结构、tool_use/tool_result 配对完整保留;API key 等高熵凭证被强制识别并保留。</li>
       <li><strong>短内容不用管</strong>:单 block 小于 512 字节不参与压缩,直接透传,零开销。</li>
     </ul>

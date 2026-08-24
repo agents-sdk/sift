@@ -39,6 +39,52 @@ fn stash_dir() -> PathBuf {
     std::env::temp_dir().join("sift-stash")
 }
 
+/// 使用独立 stash store 的 Node 实例，由 npm 层的 `createSift` 创建。
+#[napi]
+pub struct SiftInstance {
+    store: FileStashStore,
+}
+
+#[napi]
+impl SiftInstance {
+    #[napi(constructor)]
+    pub fn new(stash_dir: String) -> Result<Self> {
+        if stash_dir.trim().is_empty() {
+            return Err(Error::from_reason("stashDir 不能为空"));
+        }
+        let store = FileStashStore::new(&stash_dir).map_err(|e| {
+            Error::from_reason(format!("无法初始化 stash 落盘存储 {stash_dir}: {e}"))
+        })?;
+        Ok(Self { store })
+    }
+
+    /// 使用该实例的 stash store 压缩请求 body。
+    #[napi]
+    pub fn sift_request(&self, body: Value, query: Option<String>) -> Result<CompressResult> {
+        Ok(compress_request_with_store(
+            body,
+            &self.store,
+            query.as_deref(),
+        ))
+    }
+
+    /// 使用该实例的 stash store 压缩裸文本。
+    #[napi]
+    pub fn sift_text(&self, text: String, query: Option<String>) -> Result<TextCompressResult> {
+        Ok(compress_text_with_store(
+            &text,
+            &self.store,
+            query.as_deref(),
+        ))
+    }
+
+    /// 只从该实例的 stash store 取回原文。
+    #[napi]
+    pub fn retrieve(&self, key: String) -> Option<String> {
+        self.store.get(&key)
+    }
+}
+
 /// 压缩请求 body 的结果。
 ///
 /// 输入/输出都是 JS 对象（会被 parse 成 serde_json::Value）。
@@ -67,12 +113,19 @@ pub struct CompressResult {
 /// system/user/assistant prompt。`query` 为当前用户 query（供相关性锚点压缩器
 /// 使用，可空）。
 #[napi]
-pub fn sift_request(mut body: Value, query: Option<String>) -> Result<CompressResult> {
+pub fn sift_request(body: Value, query: Option<String>) -> Result<CompressResult> {
+    Ok(compress_request_with_store(body, store(), query.as_deref()))
+}
+
+fn compress_request_with_store(
+    mut body: Value,
+    store: &dyn StashStore,
+    query: Option<&str>,
+) -> CompressResult {
     use sift::formats::{detect_request_format, frozen_message_count};
     let frozen = frozen_message_count(&body, detect_request_format(&body)) as u32;
-    let outcome =
-        sift::live_zone::compress_live_zone(&mut body, Some(store()), query.as_deref());
-    Ok(CompressResult {
+    let outcome = sift::live_zone::compress_live_zone(&mut body, Some(store), query);
+    CompressResult {
         body,
         changed: outcome.changed,
         blocks_examined: outcome.blocks_examined as u32,
@@ -81,7 +134,7 @@ pub fn sift_request(mut body: Value, query: Option<String>) -> Result<CompressRe
         frozen_messages: frozen,
         stash_stored: outcome.stash_stored as u32,
         tokens_saved: outcome.tokens_saved,
-    })
+    }
 }
 
 /// 按取回标记 key 取回原文（压缩时卸载进 store 的原始内容）。
@@ -109,14 +162,22 @@ pub struct TextCompressResult {
 /// `query` 为当前用户 query（供相关性锚点压缩器使用，可空）。
 #[napi]
 pub fn sift_text(text: String, query: Option<String>) -> Result<TextCompressResult> {
-    let r = sift::text_api::compress_text(&text, Some(store()), query.as_deref());
-    Ok(TextCompressResult {
+    Ok(compress_text_with_store(&text, store(), query.as_deref()))
+}
+
+fn compress_text_with_store(
+    text: &str,
+    store: &dyn StashStore,
+    query: Option<&str>,
+) -> TextCompressResult {
+    let r = sift::text_api::compress_text(text, Some(store), query);
+    TextCompressResult {
         text: r.text,
         changed: r.changed,
         lossy: r.lossy,
         stash_key: r.stash_key,
         tokens_saved: r.tokens_saved,
-    })
+    }
 }
 
 /// 请求格式检测：'anthropic' | 'chat_completions' | 'responses' | 'unknown'。
@@ -183,5 +244,17 @@ mod tests {
             // 无损或透传时无需回取。
             assert!(!r.text.contains("<<stash:") || !r.lossy);
         }
+    }
+
+    #[test]
+    fn instance_uses_its_own_stash_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "sift-node-instance-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let instance = SiftInstance::new(dir.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(instance.store.dir(), dir.as_path());
+        std::fs::remove_dir_all(dir).ok();
     }
 }

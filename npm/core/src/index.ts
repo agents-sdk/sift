@@ -99,11 +99,68 @@ export type ContentType =
   | 'html';
 
 interface NativeModule {
+  SiftInstance: NativeSiftConstructor;
   siftRequest(body: object, query?: string): CompressResult;
   siftText(text: string, query?: string): TextCompressResult;
   retrieve(key: string): string | null;
   detectContentType(text: string): ContentType;
   detectRequestFormat(body: object): RequestFormat;
+}
+
+interface NativeSiftConstructor {
+  new (stashDir: string): NativeSiftInstance;
+}
+
+interface NativeSiftInstance {
+  siftRequest(body: object, query?: string): CompressResult;
+  siftText(text: string, query?: string): TextCompressResult;
+  retrieve(key: string): string | null;
+}
+
+/** `createSift` 的实例配置。 */
+export interface SiftOptions {
+  /** 该实例专用的 stash 落盘目录；相对路径按调用时的 cwd 解析。 */
+  stashDir: string;
+}
+
+/** 绑定到独立 stash store 的压缩 API。 */
+export interface Sift {
+  siftRequest(body: object, query?: string): CompressResult;
+  siftText(text: string, query?: string): TextCompressResult;
+  retrieve(key: string): string | null;
+  detectContentType(text: string): ContentType;
+  detectRequestFormat(body: object): RequestFormat;
+}
+
+/**
+ * 创建使用独立 stash 目录的压缩实例。
+ * 顶层 `siftRequest` / `siftText` / `retrieve` 仍使用环境变量或默认目录。
+ */
+export function createSift(options: SiftOptions): Sift {
+  if (!options || typeof options.stashDir !== 'string' || options.stashDir.trim() === '') {
+    throw new TypeError('createSift: stashDir 必须是非空字符串');
+  }
+  const stashDir = path.resolve(options.stashDir);
+  const instance = new native.SiftInstance(stashDir);
+  return {
+    siftRequest(body: object, query?: string): CompressResult {
+      const r = instance.siftRequest(body, query);
+      return { ...r, stashStored: r.stashStored ?? 0 };
+    },
+    siftText(text: string, query?: string): TextCompressResult {
+      const r = instance.siftText(text, query);
+      return { ...r, stashKey: r.stashKey ?? null };
+    },
+    retrieve(key: string): string | null {
+      return instance.retrieve(key);
+    },
+    detectContentType(text: string): ContentType {
+      return native.detectContentType(text);
+    },
+    detectRequestFormat(body: object): RequestFormat {
+      return native.detectRequestFormat(body);
+    },
+  };
 }
 
 /**

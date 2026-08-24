@@ -88,6 +88,8 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
   （自动检测格式：Anthropic /v1/messages、OpenAI Chat Completions、OpenAI Responses API）
 - `siftText(text, query?) -> { text, changed, lossy, stashKey, tokensSaved }`（单条字符串压缩）
 - `retrieve(key) -> string | null`（按 `<<stash:KEY>>` 取回压缩时卸载的原文）
+- `createSift({ stashDir }) -> Sift`（创建绑定到独立 stash 目录的同构 API 实例；顶层 API
+  仍按 `SIFT_STASH_DIR` / `~/.sift/stash` 使用全局 store）
 - `detectContentType(text) -> 'json_array' | 'build_output' | ...`
 - `detectRequestFormat(body) -> 'anthropic' | 'chat_completions' | 'responses' | 'unknown'`
 

@@ -1,5 +1,9 @@
 import * as assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
+  createSift,
   siftRequest,
   siftText,
   retrieve,
@@ -137,5 +141,35 @@ assert.strictEqual(siftText('tiny').changed, false);
 
 // Anthropic 格式检测（含 cache_control）
 assert.strictEqual(detectRequestFormat(body), 'anthropic');
+
+// createSift 使用调用方指定的独立 stash 目录，不影响顶层默认 store。
+const customStashDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sift-custom-stash-'));
+try {
+  const customSift = createSift({ stashDir: customStashDir });
+  const customJson = JSON.stringify(
+    rows.map((row) => ({ ...row, customStoreMarker: `custom-${row.id}` })),
+  );
+  const { siftText: customSiftText } = customSift;
+  const customResult = customSiftText(customJson);
+  assert.strictEqual(customResult.lossy, true, '自定义 store 用例应走有损压缩');
+  assert.ok(customResult.stashKey, '自定义 store 的有损结果应带 stashKey');
+  assert.strictEqual(customSift.retrieve(customResult.stashKey!), customJson);
+  assert.strictEqual(
+    retrieve(customResult.stashKey!),
+    null,
+    '顶层 retrieve 不应读取 createSift 的独立 store',
+  );
+  assert.strictEqual(
+    fs.existsSync(path.join(customStashDir, customResult.stashKey!)),
+    true,
+    '原文应写入 createSift 指定的目录',
+  );
+  assert.strictEqual(customSift.detectContentType('[{"a":1}]'), 'json_array');
+  assert.strictEqual(customSift.detectRequestFormat(chatBody), 'chat_completions');
+} finally {
+  fs.rmSync(customStashDir, { recursive: true, force: true });
+}
+
+assert.throws(() => createSift({ stashDir: '   ' }), /stashDir/);
 
 console.log('✓ @agent-context/sift smoke test passed');
