@@ -100,4 +100,6 @@ jobs:
         working-directory: npm/core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        # --ignore-scripts：跳过 prepublishOnly 的 build:cross（CI 产物已就绪，
+        # 且 ubuntu runner 无 zig，重编译必失败）；TS 已在上一步构建
+        run: npm publish --access public --ignore-scripts
