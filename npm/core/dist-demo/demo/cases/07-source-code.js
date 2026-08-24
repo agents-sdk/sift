@@ -14,9 +14,9 @@ input += '    map\n}\n';
 exports.sourceCodeCase = {
     id: 'source-code',
     title: 'Rust 源代码',
-    description: '识别 Rust 结构并折叠长函数体，保留签名，完整源码写入 CCR。',
+    description: '识别 Rust 结构并折叠长函数体，保留签名，完整源码写入 stash。',
     input,
     expectedType: 'source_code',
-    expectedPath: 'lossy-ccr',
+    expectedPath: 'lossy-stash',
     mustContain: ['pub struct Config', 'pub fn build_index', 'lines omitted'],
 };

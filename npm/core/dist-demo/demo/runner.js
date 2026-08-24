@@ -41,9 +41,9 @@ const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
 // 走用户实际使用的包入口：package.json 的 main -> dist/index.js。
 // 编译后的文件位于 dist-demo/demo/runner.js，向上两级是 npm 包根目录。
-(_a = process.env).COMPRESSOR_CCR_DIR ?? (_a.COMPRESSOR_CCR_DIR = path.join(os.tmpdir(), `compressor-core-demo-${process.pid}`));
-const { compress, retrieve, detectContentType } = require(path.resolve(__dirname, '..', '..'));
-const CCR_RE = /<<ccr:([0-9a-f]{24})>>/g;
+(_a = process.env).SIFT_STASH_DIR ?? (_a.SIFT_STASH_DIR = path.join(os.tmpdir(), `sift-demo-${process.pid}`));
+const { siftRequest, retrieve, detectContentType } = require(path.resolve(__dirname, '..', '..'));
+const STASH_RE = /<<stash:([0-9a-f]{24})>>/g;
 function makeBody(content) {
     return {
         messages: [
@@ -104,7 +104,7 @@ function renderResultMarkdown(demo, result) {
     ];
     if (demo.query)
         lines.push(`- 相关性 query：\`${demo.query}\``);
-    lines.push('', '## 压缩前原文', '', '> 内容完整保留；为了便于阅读，JSON 仅在展示时进行了缩进美化。', '', codeBlock(formatOriginalForDisplay(demo.input)), '', '## 压缩后输出', '', codeBlock(result.output), '', '## 运行结果', '', '| 指标 | 结果 |', '|---|---:|', `| 原文字节数 | ${result.beforeBytes} |`, `| 压缩后字节数 | ${result.afterBytes} |`, `| 压缩后占比 | ${(result.compressionRatio * 100).toFixed(1)}% |`, `| 节省 token（估算） | ${result.tokensSaved} |`, `| 检查 block | ${result.blocksExamined} |`, `| 压缩 block | ${result.blocksCompressed} |`, `| 回退 block | ${result.blocksReverted} |`, `| 冻结消息 | ${result.frozenMessages} |`, `| CCR 写入 | ${result.ccrStored} |`, '', `- CCR 恢复：${result.ccrKey ? `PASS（\`${result.ccrKey}\`）` : '不适用'}`, '- 场景断言：PASS', '');
+    lines.push('', '## 压缩前原文', '', '> 内容完整保留；为了便于阅读，JSON 仅在展示时进行了缩进美化。', '', codeBlock(formatOriginalForDisplay(demo.input)), '', '## 压缩后输出', '', codeBlock(result.output), '', '## 运行结果', '', '| 指标 | 结果 |', '|---|---:|', `| 原文字节数 | ${result.beforeBytes} |`, `| 压缩后字节数 | ${result.afterBytes} |`, `| 压缩后占比 | ${(result.compressionRatio * 100).toFixed(1)}% |`, `| 节省 token（估算） | ${result.tokensSaved} |`, `| 检查 block | ${result.blocksExamined} |`, `| 压缩 block | ${result.blocksCompressed} |`, `| 回退 block | ${result.blocksReverted} |`, `| 冻结消息 | ${result.frozenMessages} |`, `| stash 写入 | ${result.stashStored} |`, '', `- stash 恢复：${result.stashKey ? `PASS（\`${result.stashKey}\`）` : '不适用'}`, '- 场景断言：PASS', '');
     return lines.join('\n');
 }
 /** 完整打印一个场景的原文、压缩后文本和验证指标。 */
@@ -120,7 +120,7 @@ function runCase(demo, index, total) {
     console.log(formatOriginalForDisplay(demo.input));
     const body = makeBody(demo.input);
     const frozenBefore = JSON.stringify(body.messages[0]);
-    const result = compress(body, demo.query);
+    const result = siftRequest(body, demo.query);
     const output = result.body.messages[1].content[0].content;
     heading('压缩后输出（完整）');
     console.log(output);
@@ -139,19 +139,19 @@ function runCase(demo, index, total) {
     console.log(`blocksCompressed: ${result.blocksCompressed}`);
     console.log(`blocksReverted:   ${result.blocksReverted}`);
     console.log(`frozenMessages:   ${result.frozenMessages}`);
-    console.log(`ccrStored:        ${result.ccrStored}`);
+    console.log(`stashStored:        ${result.stashStored}`);
     // 所有场景共同验证：类型识别正确，冻结前缀逐字不动。
     assert.strictEqual(contentType, demo.expectedType);
     assert.strictEqual(JSON.stringify(result.body.messages[0]), frozenBefore);
     assert.strictEqual(result.frozenMessages, 1);
-    let ccrKey;
-    if (demo.expectedPath === 'lossy-ccr') {
+    let stashKey;
+    if (demo.expectedPath === 'lossy-stash') {
         assert.strictEqual(result.changed, true);
-        const keys = [...output.matchAll(CCR_RE)].map((match) => match[1]);
-        assert.ok(keys.length > 0, '有损结果必须包含合法的 CCR 标记');
-        ccrKey = keys[keys.length - 1];
-        assert.strictEqual(retrieve(ccrKey), demo.input, 'CCR 必须能恢复完整原文');
-        console.log(`CCR restore:      PASS (${ccrKey})`);
+        const keys = [...output.matchAll(STASH_RE)].map((match) => match[1]);
+        assert.ok(keys.length > 0, '有损结果必须包含合法的 stash 标记');
+        stashKey = keys[keys.length - 1];
+        assert.strictEqual(retrieve(stashKey), demo.input, 'stash 必须能恢复完整原文');
+        console.log(`stash restore:      PASS (${stashKey})`);
     }
     else if (demo.expectedPath === 'changed') {
         assert.strictEqual(result.changed, true);
@@ -176,7 +176,7 @@ function runCase(demo, index, total) {
         blocksCompressed: result.blocksCompressed,
         blocksReverted: result.blocksReverted,
         frozenMessages: result.frozenMessages,
-        ccrStored: result.ccrStored,
-        ccrKey,
+        stashStored: result.stashStored,
+        stashKey,
     };
 }

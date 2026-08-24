@@ -9,7 +9,7 @@ export interface DemoCase {
   input: string;
   query?: string;
   expectedType: ContentType;
-  expectedPath: 'lossy-ccr' | 'changed' | 'unchanged';
+  expectedPath: 'lossy-stash' | 'changed' | 'unchanged';
   /** 压缩结果中必须保留的关键文本。 */
   mustContain?: string[];
   /** 额外验证；抛出异常即表示示例失败。 */

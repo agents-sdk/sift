@@ -15,26 +15,43 @@ import Demo from '../components/Demo';
         </p>
         <div class="hero-cta">
           <a href="#demo" class="btn btn-primary">看压缩效果 →</a>
-          <span class="hero-install" data-copy="npm install @compressor/core">npm i <code>@compressor/core</code></span>
+          <span class="hero-install" data-copy="npm install @agent-context/sift">npm i <code>@agent-context/sift</code></span>
         </div>
       </div>
 
       <div class="fold-card" aria-hidden="true">
         <div class="fold-head">
           <span>tool_output.txt</span>
-          <span>compressText()</span>
+          <span>siftText()</span>
         </div>
         <div class="fold-lines">
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
-          <div class="fold-line"></div>
+          <div class="fold-track">
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line skip"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line skip"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line skip"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line skip"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line skip"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+            <div class="fold-line"></div>
+          </div>
         </div>
         <div class="fold-foot">
           <div class="fold-ratio">
@@ -80,7 +97,7 @@ import Demo from '../components/Demo';
       <span class="inv-no">RULE 03</span>
       <div>
         <h3>有损必须可恢复</h3>
-        <p>有损压缩的原文进 CCR store,输出留 «ccr:HASH» 标记,随时取回,端到端无损。</p>
+        <p>有损压缩的原文进 stash store,输出留 «stash:HASH» 标记,随时取回,端到端无损。</p>
       </div>
     </div>
   </section>

@@ -7,7 +7,7 @@ interface Props {
   description?: string;
 }
 
-const { title = 'compressor — LLM 上下文压缩', description = '压缩 LLM 对话上下文,节省 token 与缓存成本。消息内压缩、冻结前缀不动、有损可恢复。' } = Astro.props;
+const { title = 'sift — LLM 上下文压缩', description = '压缩 LLM 对话上下文,节省 token 与缓存成本。消息内压缩、冻结前缀不动、有损可恢复。' } = Astro.props;
 
 // 当前页导航高亮:首页精确匹配,文档按前缀匹配
 const path = Astro.url.pathname;
@@ -22,6 +22,7 @@ const isActive = (href: string) =>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -32,7 +33,17 @@ const isActive = (href: string) =>
   <body>
     <header class="site-header">
       <div class="container">
-        <a href="/" class="logo"><span class="glyph">⌁</span> compressor <span class="ver">v0.1</span></a>
+        <a href="/" class="logo">
+          <span class="glyph" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 5h16"/>
+              <path d="M4 10h16"/>
+              <path d="M4 15h16"/>
+              <path d="M9 20h6"/>
+            </svg>
+          </span>
+          <span class="brand">sift</span> <span class="ver">v0.1</span>
+        </a>
         <nav class="site-nav">
           <a href="/" aria-current={isActive('/') ? 'page' : undefined}>首页</a>
           <a href="/docs/quickstart" aria-current={isActive('/docs/quickstart') ? 'page' : undefined}>快速上手</a>
@@ -46,7 +57,7 @@ const isActive = (href: string) =>
     </main>
     <footer class="site-footer">
       <div class="container">
-        <span>© 2026 compressor · Apache-2.0 开源</span>
+        <span>© 2026 sift · Apache-2.0 开源</span>
         <nav class="footer-nav">
           <a href="/docs/quickstart">快速上手</a>
           <a href="/docs/how-it-works">工作原理</a>

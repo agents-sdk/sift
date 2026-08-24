@@ -1,11 +1,11 @@
-// 预生成官网演示样本:调本地 @compressor/core 压缩 6 类真实感输入,
+// 预生成官网演示样本:调本地 @agent-context/sift 压缩 6 类真实感输入,
 // 产出 site/src/data/samples.json(离线运行,站点本身零后端依赖)。
 //
 // 用法:node scripts/gen-demo-samples.mjs  (或 cd site && npm run gen:samples)
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compressText, detectContentType } from '../site/vendor/compressor-core/dist/index.js';
+import { siftText, detectContentType } from '../site/vendor/sift/dist/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -45,7 +45,7 @@ function buildOutputSample() {
     lines.push(`   Compiling ${crate} v${1 + (i % 4)}.${i % 20}.${i % 9}`);
     if (i % 6 === 5) {
       lines.push(`warning: unused import: \`std::collections::HashMap\``);
-      lines.push(` --> crates/compressor-core/src/relevance.rs:${10 + i}:${5 + i}`);
+      lines.push(` --> crates/sift/src/relevance.rs:${10 + i}:${5 + i}`);
       lines.push('  |');
       lines.push(`${10 + i} | use std::collections::HashMap;`);
       lines.push('  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^');
@@ -56,38 +56,38 @@ function buildOutputSample() {
   }
   for (let i = 0; i < 12; i++) {
     lines.push(`warning: field \`legacy_${i}\` is never read`);
-    lines.push(` --> crates/compressor-core/src/policy.rs:${40 + i * 3}:9`);
+    lines.push(` --> crates/sift/src/policy.rs:${40 + i * 3}:9`);
     lines.push('  |');
     lines.push(`${40 + i * 3} |     legacy_${i}: Option<String>,`);
     lines.push('  |     ^^^^^^^^^^^^');
     lines.push('  |');
     lines.push('  = note: `#[warn(dead_code)]` on by default');
   }
-  lines.push('   Compiling compressor-core v0.4.2 (crates/compressor-core)');
+  lines.push('   Compiling sift v0.4.2 (crates/sift)');
   lines.push('error[E0308]: mismatched types');
-  lines.push('   --> crates/compressor-core/src/tokenizer.rs:128:23');
+  lines.push('   --> crates/sift/src/tokenizer.rs:128:23');
   lines.push('    |');
   lines.push('128 |     let n: u32 = text.chars().count() as u64;');
   lines.push('    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^ an `as` cast can silently truncate');
   lines.push('    |');
   lines.push('help: try: `text.chars().count().try_into().unwrap()`');
   lines.push('');
-  lines.push('error: could not compile `compressor-core` (bin "compressor-core") due to 1 previous error');
+  lines.push('error: could not compile `sift` (bin "sift") due to 1 previous error');
   return lines.join('\n');
 }
 
 function searchResultsSample() {
   const files = [
-    'crates/compressor-core/src/transforms/mod.rs',
-    'crates/compressor-core/src/transforms/smart_crusher.rs',
-    'crates/compressor-core/src/transforms/log_compressor.rs',
-    'crates/compressor-core/src/ccr.rs',
-    'crates/compressor-core/src/relevance.rs',
+    'crates/sift/src/transforms/mod.rs',
+    'crates/sift/src/transforms/smart_crusher.rs',
+    'crates/sift/src/transforms/log_compressor.rs',
+    'crates/sift/src/stash.rs',
+    'crates/sift/src/relevance.rs',
     'npm/core/src/index.ts',
     'docs/PROJECT_MAP.md',
   ];
-  const terms = ['compressText', 'CcrStore', 'ReformatTransform', 'frozen', 'tokensSaved'];
-  const lines = ['$ rg -n "compressText|CcrStore|frozen" crates/ npm/ docs/'];
+  const terms = ['siftText', 'StashStore', 'ReformatTransform', 'frozen', 'tokensSaved'];
+  const lines = ['$ rg -n "siftText|StashStore|frozen" crates/ npm/ docs/'];
   for (let i = 0; i < 60; i++) {
     const f = files[i % files.length];
     const t = terms[(i / 7) % terms.length | 0];
@@ -134,7 +134,7 @@ function plainTextSample() {
 const SAMPLES = [
   { type: 'json_array', label: 'JSON 数组', query: 'error degraded service status', desc: '结构化监控数据(schema 去重 + 采样,关键行保留)', make: jsonArraySample },
   { type: 'build_output', label: '构建日志', query: 'error mismatched types could not compile', desc: 'cargo/npm 构建输出(错误与堆栈保留,重复 warning 折叠)', make: buildOutputSample },
-  { type: 'search_results', label: '搜索结果', query: 'compressText CcrStore frozen', desc: 'grep / ripgrep 输出(重复行抽稀,匹配项保留)', make: searchResultsSample },
+  { type: 'search_results', label: '搜索结果', query: 'siftText StashStore frozen', desc: 'grep / ripgrep 输出(重复行抽稀,匹配项保留)', make: searchResultsSample },
   { type: 'git_diff', label: 'Git Diff', query: 'new_impl crush', desc: 'unified diff(hunk 采样,改动行保留)', make: diffSample },
   { type: 'plain_text', label: '纯文本', query: '结论 冻结前缀 CCR 发布', desc: '中英文抽取式摘要(BM25 相关性 + 近重复折叠)', make: plainTextSample },
 ];
@@ -145,7 +145,7 @@ const results = [];
 for (const s of SAMPLES) {
   const original = s.make();
   const detected = detectContentType(original);
-  const r = compressText(original, s.query);
+  const r = siftText(original, s.query);
   results.push({
     type: s.type,
     label: s.label,
@@ -154,7 +154,7 @@ for (const s of SAMPLES) {
     detected,
     changed: r.changed,
     lossy: r.lossy,
-    ccrKey: r.ccrKey,
+    stashKey: r.stashKey,
     tokensSaved: r.tokensSaved,
     original,
     compressed: r.text,

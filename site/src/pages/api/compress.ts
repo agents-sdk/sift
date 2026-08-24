@@ -1,7 +1,7 @@
-// 自定义粘贴内容的压缩入口:Vercel serverless function 调 @compressor/core。
-// 有损压缩时返回 ccrKey——原文留在服务端 CCR store,可通过 retrieve 取回。
+// 自定义粘贴内容的压缩入口:Vercel serverless function 调 @agent-context/sift。
+// 有损压缩时返回 stashKey——原文留在服务端 CCR store,可通过 retrieve 取回。
 import type { APIRoute } from 'astro';
-import { compressText, detectContentType } from '@compressor/core';
+import { siftText, detectContentType } from '@agent-context/sift';
 
 export const POST: APIRoute = async ({ request }) => {
   let text: string;
@@ -21,12 +21,12 @@ export const POST: APIRoute = async ({ request }) => {
   }
   try {
     const detected = detectContentType(text);
-    const r = compressText(text, query);
+    const r = siftText(text, query);
     return Response.json({
       detected,
       changed: r.changed,
       lossy: r.lossy,
-      ccrKey: r.ccrKey,
+      stashKey: r.stashKey,
       tokensSaved: r.tokensSaved,
       text: r.text,
     });

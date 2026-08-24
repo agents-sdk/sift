@@ -1,0 +1,16 @@
+[package]
+name = "sift-node"
+version = "0.0.1-alpha.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "@agent-context/sift 的 Node 原生模块：napi-rs 桥接到 sift"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sift.workspace = true
+napi.workspace = true
+napi-derive.workspace = true
+serde_json.workspace = true

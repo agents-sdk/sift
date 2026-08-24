@@ -11,10 +11,10 @@ for (let file = 0; file < 12; file++) {
 exports.searchResultsCase = {
     id: 'search-results',
     title: 'grep / ripgrep 搜索结果',
-    description: '按文件和 query 相关性抽稀搜索命中，完整结果可从 CCR 恢复。',
+    description: '按文件和 query 相关性抽稀搜索命中，完整结果可从 stash 恢复。',
     input: lines.join('\n'),
     query: 'compute_thing',
     expectedType: 'search_results',
-    expectedPath: 'lossy-ccr',
+    expectedPath: 'lossy-stash',
     mustContain: ['src/module_00.rs', 'compute_thing'],
 };

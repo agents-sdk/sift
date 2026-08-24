@@ -20,10 +20,10 @@ for (let file = 0; file < 8; file++) {
 exports.gitDiffCase = {
     id: 'git-diff',
     title: '多文件 git diff',
-    description: '保留文件头和关键 hunk，抽稀上下文行，完整 diff 写入 CCR。',
+    description: '保留文件头和关键 hunk，抽稀上下文行，完整 diff 写入 stash。',
     input: lines.join('\n'),
     query: 'new_line',
     expectedType: 'git_diff',
-    expectedPath: 'lossy-ccr',
+    expectedPath: 'lossy-stash',
     mustContain: ['diff --git', '+    new_line_'],
 };

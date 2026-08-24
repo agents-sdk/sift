@@ -33,7 +33,7 @@ interface Sample {
   detected: string;
   changed: boolean;
   lossy: boolean;
-  ccrKey: string | null;
+  stashKey: string | null;
   tokensSaved: number;
   original: string;
   compressed: string;
@@ -43,7 +43,7 @@ interface ApiResult {
   detected: string;
   changed: boolean;
   lossy: boolean;
-  ccrKey: string | null;
+  stashKey: string | null;
   tokensSaved: number;
   text: string;
 }
@@ -52,6 +52,28 @@ type Mode = 'builtin' | 'custom';
 
 function bytes(n: number): string {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+}
+
+// 压缩输出的差异高亮:
+//  - «/<<stash:HASH>>  恢复标记 → 金色
+//  - [N lines omitted: …] / [... N more …] / [N lines compressed …] → 灰色删除线感的折叠标记
+//  - [file changed, +a -b] 统计行 → 灰色
+function highlightCompressed(text: string) {
+  const parts: Array<{ t: string; k: 'stash' | 'fold' | 'stat' | null }> = [];
+  // 顺序匹配:ccr 标记 | 括号折叠/统计行
+  const re =
+    /(<<stash:[a-f0-9]+>>|«stash:[a-f0-9]+»)|(\[[^\]\n]{0,120}(?:omitted|compressed|more|changed|Retrieve)[^\]\n]{0,120}\])/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push({ t: text.slice(last, m.index), k: null });
+    parts.push({ t: m[0], k: m[1] ? 'stash' : 'fold' });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ t: text.slice(last), k: null });
+  return parts.map((p, i) =>
+    p.k ? <span key={i} className={`hl-${p.k}`}>{p.t}</span> : <span key={i}>{p.t}</span>
+  );
 }
 
 export default function Demo() {
@@ -82,7 +104,7 @@ export default function Demo() {
       tokensSaved: mode === 'builtin' ? sample.tokensSaved : (result?.tokensSaved ?? 0),
       lossy: mode === 'builtin' ? sample.lossy : (result?.lossy ?? false),
       detected: mode === 'builtin' ? sample.detected : result?.detected,
-      ccrKey: mode === 'builtin' ? sample.ccrKey : result?.ccrKey,
+      stashKey: mode === 'builtin' ? sample.stashKey : result?.stashKey,
       changed: mode === 'builtin' ? sample.changed : result?.changed,
     };
   }, [mode, orig, comp, result, sample]);
@@ -213,10 +235,10 @@ export default function Demo() {
           <div className="pane compressed">
             <div className="pane-head">
               <span className="pane-title"><span className="dot" />压缩输出</span>
-              {stats.ccrKey && <code className="ccr">«ccr:{stats.ccrKey.slice(0, 12)}…»</code>}
+              {stats.stashKey && <code className="ccr">«stash:{stats.stashKey.slice(0, 12)}…»</code>}
               <CopyButton text={comp} />
             </div>
-            <pre>{comp}</pre>
+            <pre>{highlightCompressed(comp)}</pre>
           </div>
         </div>
       )}

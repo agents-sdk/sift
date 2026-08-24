@@ -1,5 +1,5 @@
 // 加载 Rust cdylib。构建脚本（napi build --platform）产出带平台后缀的
-// `native/compressor.<platform-triple>.node`，按 __dirname 解析，编译后
+// `native/sift.<platform-triple>.node`，按 __dirname 解析，编译后
 // dist/index.js 也能找到。
 import * as path from 'path';
 
@@ -12,7 +12,7 @@ function platformTriple(): string {
     const libc = detectLibc();
     return `linux-${arch}-${libc}`;
   }
-  throw new Error(`@compressor/core: 不支持的平台 ${platform}`);
+  throw new Error(`@agent-context/sift: 不支持的平台 ${platform}`);
 }
 
 /** 区分 glibc / musl（仅 Linux 生效）。 */
@@ -24,20 +24,20 @@ function detectLibc(): 'gnu' | 'musl' {
 
 function loadNative(): NativeModule {
   // 加载顺序：
-  // 1. 平台子包 @compressor/core-<platform>（npm 安装后由 optionalDependencies 命中）
-  // 2. 本地 native/compressor.<platform>.node（仓库内开发模式）
-  // 3. native/compressor.node（napi build 未加 --platform 的产物）
+  // 1. 平台子包 @agent-context/sift-<platform>（npm 安装后由 optionalDependencies 命中）
+  // 2. 本地 native/sift.<platform>.node（仓库内开发模式）
+  // 3. native/sift.node（napi build 未加 --platform 的产物）
   const platform = platformTriple();
   const nativeDirs = [
     path.join(__dirname, '..', 'native'), // dist/index.js 布局
     path.join(__dirname, '..', '..', 'native'), // dist-demo/src、dist-test 布局
   ];
   const candidates: Array<() => NativeModule> = [
-    () => require(`@compressor/core-${platform}`) as NativeModule,
+    () => require(`@agent-context/sift-${platform}`) as NativeModule,
     ...nativeDirs.map(
-      (dir) => () => require(path.join(dir, `compressor.${platform}.node`)) as NativeModule,
+      (dir) => () => require(path.join(dir, `sift.${platform}.node`)) as NativeModule,
     ),
-    ...nativeDirs.map((dir) => () => require(path.join(dir, 'compressor.node')) as NativeModule),
+    ...nativeDirs.map((dir) => () => require(path.join(dir, 'sift.node')) as NativeModule),
   ];
   for (const load of candidates) {
     try {
@@ -47,7 +47,7 @@ function loadNative(): NativeModule {
     }
   }
   throw new Error(
-    `@compressor/core: 未找到 ${platform} 的原生模块（子包 @compressor/core-${platform} 或本地 native/）。先运行 npm run build。`,
+    `@agent-context/sift: 未找到 ${platform} 的原生模块（子包 @agent-context/sift-${platform} 或本地 native/）。先运行 npm run build。`,
   );
 }
 
@@ -67,7 +67,7 @@ export interface CompressResult {
   /** 冻结前缀消息条数（cache 锚点，未被触碰；OpenAI 格式恒为 0） */
   frozenMessages: number;
   /** 写入 CCR store 的原文条数 */
-  ccrStored: number;
+  stashStored: number;
   /** 估算节省的 token 数 */
   tokensSaved: number;
 }
@@ -77,14 +77,14 @@ export type RequestFormat = 'anthropic' | 'chat_completions' | 'responses' | 'un
 
 /** 裸文本（如工具输出原文）的压缩结果。 */
 export interface TextCompressResult {
-  /** 压缩后的文本（有损时尾部带 `<<ccr:KEY>>` 标记） */
+  /** 压缩后的文本（有损时尾部带 `<<stash:KEY>>` 标记） */
   text: string;
   /** 是否发生了实际压缩 */
   changed: boolean;
   /** 是否有损（原文已写入 CCR store，可用 retrieve 取回） */
   lossy: boolean;
   /** 有损时的取回 key */
-  ccrKey: string | null;
+  stashKey: string | null;
   /** 估算节省的 token 数 */
   tokensSaved: number;
 }
@@ -99,8 +99,8 @@ export type ContentType =
   | 'html';
 
 interface NativeModule {
-  compress(body: object, query?: string): CompressResult;
-  compressText(text: string, query?: string): TextCompressResult;
+  siftRequest(body: object, query?: string): CompressResult;
+  siftText(text: string, query?: string): TextCompressResult;
   retrieve(key: string): string | null;
   detectContentType(text: string): ContentType;
   detectRequestFormat(body: object): RequestFormat;
@@ -110,13 +110,17 @@ interface NativeModule {
  * 压缩请求 body（就地透传或压缩）。自动检测格式：
  * Anthropic /v1/messages、OpenAI Chat Completions、OpenAI Responses API。
  */
-export function compress(body: object, query?: string): CompressResult {
-  return native.compress(body, query);
+export function siftRequest(body: object, query?: string): CompressResult {
+  const r = native.siftRequest(body, query);
+  // napi 对 Option::None 的字段会整个省略,这里补齐为 null,保证字段形状稳定
+  return { ...r, stashStored: r.stashStored ?? 0 };
 }
 
 /** 压缩单个字符串（如把工具输出原文送进任意 API 之前）。 */
-export function compressText(text: string, query?: string): TextCompressResult {
-  return native.compressText(text, query);
+export function siftText(text: string, query?: string): TextCompressResult {
+  const r = native.siftText(text, query);
+  // napi 对 Option::None 的字段会整个省略,这里补齐为 null,保证字段形状稳定
+  return { ...r, stashKey: r.stashKey ?? null };
 }
 
 /** 按取回标记 key 取回压缩时卸载的原文。 */

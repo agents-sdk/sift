@@ -79,7 +79,7 @@ else {
     }
     else {
         console.log('@compressor/core：原文与压缩结果逐例对照');
-        console.log(`CCR 临时目录: ${process.env.COMPRESSOR_CCR_DIR}`);
+        console.log(`stash 临时目录: ${process.env.SIFT_STASH_DIR}`);
         const completed = [];
         selected.forEach((demo, index) => {
             const result = (0, runner_1.runCase)(demo, index + 1, selected.length);
@@ -97,11 +97,11 @@ else {
                 '',
                 '以下文件由 `npm run demo -- --save` 通过 npm 包公开入口实际运行生成。',
                 '',
-                '| 示例 | 类型 | 原文字节 | 压缩后字节 | 压缩后占比 | 节省 token | CCR |',
+                '| 示例 | 类型 | 原文字节 | 压缩后字节 | 压缩后占比 | 节省 token | stash |',
                 '|---|---|---:|---:|---:|---:|---|',
                 ...completed.map(({ demo, result, fileName }) => `| [${demo.title}](./${fileName}) | ${result.contentType} | ${result.beforeBytes} | ` +
                     `${result.afterBytes} | ${(result.compressionRatio * 100).toFixed(1)}% | ` +
-                    `${result.tokensSaved} | ${result.ccrKey ? 'PASS' : '—'} |`),
+                    `${result.tokensSaved} | ${result.stashKey ? 'PASS' : '—'} |`),
                 '',
             ];
             fs.writeFileSync(path.join(resultsDir, 'README.md'), indexLines.join('\n'));

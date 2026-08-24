@@ -5,9 +5,9 @@
 #   1. build 矩阵：6 个目标平台各编一个 .node，上传 artifact
 #      （macOS 原生跑；linux 用 napi build --cross-compile + zig）
 #   2. release：下载全部 artifact，生成平台子包（gen-platform-packages.mjs），
-#      依次 publish 6 个 @compressor/core-<platform> 子包，再 publish 根包。
+#      依次 publish 6 个 @agent-context/sift-<platform> 子包，再 publish 根包。
 #
-# 所需 secret：NPM_TOKEN（npm publish 权限，@compressor scope）。
+# 所需 secret：NPM_TOKEN（npm publish 权限，@agent-context scope）。
 name: release
 
 on:
@@ -56,7 +56,7 @@ jobs:
         run: |
           npm install
           npx napi build --platform --release \
-            --manifest-path ../../crates/compressor-node/Cargo.toml \
+            --manifest-path ../../crates/sift-node/Cargo.toml \
             --output-dir native \
             ${{ matrix.zig && '--cross-compile' || '' }} \
             --target ${{ matrix.target }}

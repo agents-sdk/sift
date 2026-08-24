@@ -10,7 +10,7 @@ LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节省 token 
 
 1. 只在消息内压缩，绝不跨消息丢弃内容
 2. 冻结前缀（cache_control 标记以下）字节不动
-3. 有损压缩必须经 CCR 可恢复（`<<ccr:HASH>>` 标记 + store 原文）
+3. 有损压缩必须经 stash 可恢复（`<<stash:HASH>>` 标记 + store 原文）
 
 ## 常用命令
 
@@ -22,17 +22,17 @@ cd npm/core && npm test                # TS 冒烟测试（先构建再运行）
 ```
 
 发布：推 `v*` tag 触发 `.github/workflows/release.yml`（需 NPM_TOKEN secret）：
-build 矩阵编各平台 → 生成 `@compressor/core-<platform>` 子包 → 依次 publish 子包 + 根包。
+build 矩阵编各平台 → 生成 `@agent-context/sift-<platform>` 子包 → 依次 publish 子包 + 根包。
 
 ## 架构
 
-- `crates/compressor-core`：纯逻辑库，无 napi 依赖
-- `crates/compressor-node`：napi-rs cdylib 桥（→ `npm/core/native/compressor.node`）
-- `npm/core`：npm 包 **@compressor/core**（TypeScript），源码在 `src/`，tsc 产出到 `dist/`
+- `crates/sift`：纯逻辑库，无 napi 依赖
+- `crates/sift-node`：napi-rs cdylib 桥（→ `npm/core/native/sift.node`）
+- `npm/core`：npm 包 **@agent-context/sift**（TypeScript），源码在 `src/`，tsc 产出到 `dist/`
 
 ## 约定
 
-- 逻辑只进 `compressor-core`；`compressor-node` 只做类型桥接，不含压缩逻辑
+- 逻辑只进 `sift`；`sift-node` 只做类型桥接，不含压缩逻辑
 - 新压缩器实现 `ReformatTransform`（无损）或 `OffloadTransform`（有损+CCR），
   并在 `transforms::dispatch_compressor` 注册
 - 新特性先写测试再写实现（golden 样本放 `tests/fixtures/`）

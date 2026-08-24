@@ -2,10 +2,10 @@
 /**
  * 生成多平台 npm 子包（等价于 `napi prepublish` 的本地实现）。
  *
- * 输入：npm/core/native/compressor.<triple>.node（由 build-cross.sh 产出）
+ * 输入：npm/core/native/sift.<triple>.node（由 build-cross.sh 产出）
  * 输出：npm/core/platforms/<triple>/
- *   ├── package.json   name=@compressor/core-<platform>, files=[*.node]
- *   └── compressor.<triple>.node
+ *   ├── package.json   name=@agent-context/sift-<platform>, files=[*.node]
+ *   └── sift.<triple>.node
  *
  * 同时把根 package.json 的 optionalDependencies 更新为各平台子包，
  * npm install 时按当前平台自动装对应子包（装错平台的会被 optional 豁免）。
@@ -39,9 +39,9 @@ const license = rootPkg.license;
 
 const nodes = fs
   .readdirSync(nativeDir)
-  .filter((f) => /^compressor\..+\.node$/.test(f));
+  .filter((f) => /^sift\..+\.node$/.test(f));
 if (nodes.length === 0) {
-  console.error('错误：native/ 下没有 compressor.<triple>.node。先运行 npm run build:cross。');
+  console.error('错误：native/ 下没有 sift.<triple>.node。先运行 npm run build:cross。');
   process.exit(1);
 }
 
@@ -49,18 +49,18 @@ fs.rmSync(platformsDir, { recursive: true, force: true });
 
 const optionalDeps = {};
 for (const file of nodes) {
-  // compressor.darwin-arm64.node -> darwin-arm64；带 rust triple 的映射到平台名
+  // sift.darwin-arm64.node -> darwin-arm64；带 rust triple 的映射到平台名
   const stem = file.replace(/\.node$/, '');
   const triple = Object.keys(TRIPLE_TO_PLATFORM).find(
-    (t) => stem.endsWith(t) || stem === `compressor.${TRIPLE_TO_PLATFORM[t]}`,
+    (t) => stem.endsWith(t) || stem === `sift.${TRIPLE_TO_PLATFORM[t]}`,
   );
   const platform = triple
     ? TRIPLE_TO_PLATFORM[triple]
-    : stem.replace(/^compressor\./, '');
+    : stem.replace(/^sift\./, '');
   const dir = path.join(platformsDir, platform);
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(nativeDir, file), path.join(dir, file));
-  const name = `@compressor/core-${platform}`;
+  const name = `@agent-context/sift-${platform}`;
   fs.writeFileSync(
     path.join(dir, 'package.json'),
     JSON.stringify(
@@ -72,7 +72,7 @@ for (const file of nodes) {
         main: 'index.js',
         files: [file],
         license,
-        description: `@compressor/core 的 ${platform} 原生二进制`,
+        description: `@agent-context/sift 的 ${platform} 原生二进制`,
       },
       null,
       2,

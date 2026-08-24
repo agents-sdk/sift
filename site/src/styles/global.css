@@ -1,5 +1,5 @@
 /* ============================================================
-   compressor 官网 · 设计系统
+   sift 官网 · 设计系统
    概念:压缩 = 绿(保留下来的)/ 陶土红(折叠掉的)
    亮冷纸底 + 工程绿,等宽字承载一切数据与标签,
    "比例条"是贯穿全站的母题(hero、演示、文档皆用)。
@@ -30,6 +30,8 @@
   --gold: #9a7514;         /* 有损徽标 */
   --gold-soft: #f7efd9;
   --gold-border: #e8d9ab;
+  --gold-faint: #fdfaf1;   /* 淡金:行内 code / 命令块底色(比 gold-soft 再淡 ~50%) */
+  --gold-faint-border: #f1e8cb;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --disp: 'Space Grotesk', -apple-system, 'PingFang SC', sans-serif;
   --body: -apple-system, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
@@ -227,33 +229,59 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   border-bottom: 1px solid var(--line-soft); padding-bottom: 10px; margin-bottom: 14px;
   letter-spacing: 0.06em; position: relative; z-index: 1;
 }
-.fold-lines { display: flex; flex-direction: column; gap: 9px; position: relative; z-index: 1; }
+/* 内容流窗口:固定高度,内部条带向上滚动,制造"不断来新内容"的时间轴 */
+.fold-lines {
+  height: 196px; overflow: hidden; position: relative; z-index: 1;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 86%, transparent);
+}
+.fold-track {
+  display: flex; flex-direction: column; gap: 9px;
+  /* 一圈 12s:19px/行 × 12 行 = 228px,两组内容平移一半无缝循环 */
+  animation: scroll-up 12s linear infinite;
+}
 .fold-line {
-  height: 10px; border-radius: 3px; background: var(--line);
-  transform-origin: left center;
-  animation: fold 3.2s cubic-bezier(0.6, 0, 0.3, 1) infinite;
-}
-.fold-line:nth-child(1) { width: 92%; animation-delay: 0s; }
-.fold-line:nth-child(2) { width: 78%; background: var(--clay-soft); animation-delay: .12s; }
-.fold-line:nth-child(3) { width: 96%; background: var(--clay-soft); animation-delay: .24s; }
-.fold-line:nth-child(4) { width: 84%; animation-delay: .36s; }
-.fold-line:nth-child(5) { width: 71%; background: var(--clay-soft); animation-delay: .48s; }
-.fold-line:nth-child(6) { width: 90%; background: var(--clay-soft); animation-delay: .60s; }
-.fold-line:nth-child(7) { width: 88%; animation-delay: .72s; }
-.fold-line:nth-child(8) { width: 57%; background: var(--green-soft); animation-delay: .84s; }
-.fold-line:nth-child(9) { width: 95%; background: var(--green-soft); animation-delay: .96s; }
-.fold-line:nth-child(10) { width: 63%; background: var(--green-soft); animation-delay: 1.08s; }
-.fold-line:nth-child(2), .fold-line:nth-child(3), .fold-line:nth-child(5), .fold-line:nth-child(6) {
+  height: 10px; border-radius: 3px; background: var(--clay-soft);
   background-image: repeating-linear-gradient(to right, var(--clay-border) 0 8px, transparent 8px 12px);
-}
-.fold-line:nth-child(8), .fold-line:nth-child(9), .fold-line:nth-child(10) {
-  background-image: repeating-linear-gradient(to right, var(--green-border) 0 8px, transparent 8px 12px);
+  transform-origin: left center;
+  flex-shrink: 0;
+  /* 生命周期与滚动相位对齐:行到达底部入口时恰好是动画 0%,
+     在底部两行内完成红→绿折叠,之后定格不动,直到滚出顶部 */
+  animation: fold-cycle 12s linear infinite;
 }
 
-@keyframes fold {
-  0%, 22%   { transform: scaleX(1); opacity: 1; }
-  34%, 78%  { transform: scaleX(0.18); opacity: 0.55; }
-  90%, 100% { transform: scaleX(1); opacity: 1; }
+/* 负延迟 = 行进入底部入口的时刻,折叠永远发生在窗口最底部 */
+.fold-track .fold-line:nth-child(12n+1)  { width: 92%; animation-delay: -10.3s; }
+.fold-track .fold-line:nth-child(12n+2)  { width: 78%; animation-delay: -9.3s; }
+.fold-track .fold-line:nth-child(12n+3)  { width: 96%; animation-delay: -8.3s; }
+.fold-track .fold-line:nth-child(12n+4)  { width: 84%; animation-delay: -7.3s; }
+.fold-track .fold-line:nth-child(12n+5)  { width: 71%; animation-delay: -6.3s; }
+.fold-track .fold-line:nth-child(12n+6)  { width: 90%; animation-delay: -5.3s; }
+.fold-track .fold-line:nth-child(12n+7)  { width: 88%; animation-delay: -4.3s; }
+.fold-track .fold-line:nth-child(12n+8)  { width: 57%; animation-delay: -3.3s; }
+.fold-track .fold-line:nth-child(12n+9)  { width: 95%; animation-delay: -2.3s; }
+.fold-track .fold-line:nth-child(12n+10) { width: 63%; animation-delay: -1.3s; }
+.fold-track .fold-line:nth-child(12n+11) { width: 87%; animation-delay: -0.3s; }
+.fold-track .fold-line:nth-child(12n+12) { width: 74%; animation-delay: -11.3s; }
+
+/* 不可压缩行(穿插):全程灰色,宽度接近压缩后,不折叠不参与动画 */
+.fold-track .fold-line.skip {
+  animation: none; width: 24%;
+  background: var(--line); background-image: none; opacity: 0.55;
+}
+
+@keyframes scroll-up {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+
+/* 一圈 12s = 滚过 12 行。0-10% 行还在底部两行(19px/行):
+   红色全宽 → 折叠成绿色 18%;之后全程定格绿色不动;
+   85% 起已接近顶部渐隐区,淡为灰色历史。 */
+@keyframes fold-cycle {
+  0%, 10%   { transform: scaleX(1);    opacity: 1;    background-color: var(--clay-soft); background-image: repeating-linear-gradient(to right, var(--clay-border) 0 8px, transparent 8px 12px); }
+  16%, 80%  { transform: scaleX(0.18); opacity: 1;    background-color: var(--green-soft); background-image: repeating-linear-gradient(to right, var(--green-border) 0 8px, transparent 8px 12px); }
+  88%, 100% { transform: scaleX(0.18); opacity: 0.75; background-color: var(--line); background-image: none; }
 }
 
 .fold-foot {
@@ -271,9 +299,12 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .fold-ratio .num { color: var(--green-deep); font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) {
-  .fold-line { animation: none; }
-  .fold-line:nth-child(2), .fold-line:nth-child(3),
-  .fold-line:nth-child(5), .fold-line:nth-child(6) { transform: scaleX(0.18); opacity: .55; }
+  .fold-track, .fold-line { animation: none; }
+  /* 静态快照:除最底部两行红色待压缩,其余全部绿色压缩态,顶部几行灰色历史 */
+  .fold-track .fold-line { transform: scaleX(0.18); background: var(--green-soft); background-image: repeating-linear-gradient(to right, var(--green-border) 0 8px, transparent 8px 12px); }
+  .fold-track .fold-line:nth-child(-n+6)  { background: var(--line); background-image: none; opacity: 0.75; }
+  .fold-track .fold-line:nth-child(n+22) { transform: scaleX(1); background: var(--clay-soft); background-image: repeating-linear-gradient(to right, var(--clay-border) 0 8px, transparent 8px 12px); }
+  .fold-track .fold-line.skip { transform: scaleX(1); background: var(--line); background-image: none; opacity: 0.55; width: 24%; }
   html { scroll-behavior: auto; }
 }
 
@@ -390,6 +421,17 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   font-family: var(--mono); font-size: 12px; line-height: 1.65;
   white-space: pre-wrap; word-break: break-all; color: var(--ink);
 }
+/* 压缩输出差异高亮:金色=CCR 恢复标记,灰底=被折叠/省略的部分 */
+.pane pre .hl-ccr {
+  color: var(--gold); background: var(--gold-soft);
+  border-radius: 4px; padding: 1px 4px;
+  box-shadow: inset 0 0 0 1px var(--gold-border);
+}
+.pane pre .hl-fold {
+  color: var(--ink-dim); background: var(--line-soft);
+  border-radius: 4px; padding: 1px 4px;
+  font-style: italic;
+}
 
 /* 复制按钮(对比面板头):复制后短暂变为 ✓ */
 .pane .copy-btn {
@@ -497,7 +539,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   padding: 1px 8px; font-family: var(--mono); font-size: 10.5px; color: var(--green);
   letter-spacing: 0.06em;
 }
-/* 命令行式:单行,浅绿底,$ 前缀,复制按钮在行内右端 */
+/* 命令行式:单行,中性浅灰底(GitHub docs 风),$ 前缀,复制按钮在行内右端 */
 .codeblock.command { max-width: 620px; display: flex; align-items: stretch; }
 /* $ 前缀:与 .shiki 完全相同的字体/行高/padding,天然同高 */
 .codeblock.command .cmd-prompt,
@@ -506,13 +548,13 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 }
 .codeblock.command .cmd-prompt {
   flex-shrink: 0; display: flex; align-items: center;
-  color: var(--green); font-weight: 600;
+  color: var(--ink-faint); font-weight: 500;
   padding: 12px 6px 12px 14px;
-  background: var(--green-soft); border: 1px solid var(--green-border);
+  background: rgba(175, 184, 193, 0.07); border: 1px solid var(--line);
   border-right: none; border-radius: 10px 0 0 10px;
 }
 .codeblock.command .shiki {
-  background: var(--green-soft) !important; border-color: var(--green-border);
+  background: rgba(175, 184, 193, 0.07) !important; border-color: var(--line);
   border-left: none; border-radius: 0 10px 10px 0;
   box-shadow: none; flex: 1; min-width: 0;
   padding: 12px 48px 12px 14px;  /* 右侧给悬浮复制按钮留位 */
@@ -521,10 +563,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .codeblock.command .copy-btn {
   position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
   opacity: 0.6; width: 26px; height: 26px;
-  background: var(--green-soft); border: 1px solid var(--green-border);
-  border-radius: 7px; color: var(--green-deep);
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 7px; color: var(--ink-dim);
 }
-.codeblock.command .copy-btn:hover { opacity: 1; background: #dcebe3; }
+.codeblock.command .copy-btn:hover { opacity: 1; color: var(--green-deep); }
 
 /* 行内命令片段(hero install 等)带复制按钮 */
 .hero-install { position: relative; display: inline-flex; align-items: center; gap: 10px; }
@@ -555,8 +597,9 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .doc p, .doc li { color: var(--ink); font-size: 15px; max-width: 740px; }
 .doc p { color: #333a37; }
 .doc code {
-  font-family: var(--mono); font-size: 0.88em; background: var(--green-soft);
-  border-radius: 5px; padding: 1px 6px; color: var(--green-deep);
+  font-family: var(--mono); font-size: 0.88em;
+  background: rgba(175, 184, 193, 0.2);
+  border-radius: 6px; padding: 0.15em 0.4em; color: var(--ink);
 }
 .doc pre {
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;

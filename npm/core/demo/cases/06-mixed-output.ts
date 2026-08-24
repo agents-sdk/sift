@@ -18,6 +18,6 @@ export const mixedOutputCase: DemoCase = {
   input,
   query: 'find unhealthy pods',
   expectedType: 'plain_text',
-  expectedPath: 'lossy-ccr',
+  expectedPath: 'lossy-stash',
   mustContain: ['$ kubectl get pods -o json', 'TOTAL: 200 pods listed', 'CrashLoopBackOff'],
 };

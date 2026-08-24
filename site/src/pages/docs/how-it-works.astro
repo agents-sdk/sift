@@ -3,15 +3,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import CodeBlock from '../../components/CodeBlock.astro';
 ---
 
-<BaseLayout title="工作原理 — compressor 文档">
+<BaseLayout title="工作原理 — sift 文档">
   <article class="doc container">
     <span class="eyebrow">Docs</span>
     <h1>工作原理</h1>
-    <p>compressor 按内容类型分发到专用压缩器(<code>detectContentType</code> 自动判断)。无损优先:先尝试无损重排(JSON minify、日志 Drain 模板化),缩小到 ≤80% 即短路;不够再走有损路径,原文入 CCR store。整个流程守住三条安全底线:</p>
+    <p>sift 按内容类型分发到专用压缩器(<code>detectContentType</code> 自动判断)。无损优先:先尝试无损重排(JSON minify、日志 Drain 模板化),缩小到 ≤80% 即短路;不够再走有损路径,原文入 stash store。整个流程守住三条安全底线:</p>
     <ol>
       <li><strong>只在消息内压缩</strong>,绝不跨消息丢弃内容 —— 每条消息独立处理,tool_use / tool_result 配对受保护。</li>
       <li><strong>冻结前缀字节不动</strong> —— <code>cache_control</code> 标记以下的消息是 prompt cache 锚点,压缩绝不触碰。</li>
-      <li><strong>有损压缩必须可恢复</strong> —— 原文进 CCR store,输出留 <code>«ccr:HASH»</code> 标记,端到端无损。</li>
+      <li><strong>有损压缩必须可恢复</strong> —— 原文进 stash store,输出留 <code>«stash:HASH»</code> 标记,端到端无损。</li>
     </ol>
 
     <h2>压缩管线</h2>
@@ -26,7 +26,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
   ▼
 无损重排(JsonMinifier / LogTemplate-Drain)─≤80%─→ 短路返回
   ▼
-有损压缩(OffloadTransform)── 原文写 CCR store,输出留 «ccr:HASH»
+有损压缩(OffloadTransform)── 原文写 stash store,输出留 «stash:HASH»
   ▼
 token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang="text" />
 
@@ -48,25 +48,36 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <li><strong>保密检测</strong>:归一化 Shannon 熵 ≥0.85 且长度 ≥20 的片段(API key、凭证)强制不可丢弃。</li>
       <li><strong>标签保护</strong>:自定义 XML 标签先占位保护、压缩后恢复,不会被压坏。</li>
       <li><strong>混合内容</strong>同一 block 内含多种类型时,分段路由到各自的压缩器;嵌入的 JSON span 走递归平衡匹配。</li>
-      <li><strong>CCR 恢复</strong>:一切有损输出的原文都在 CCR store,输出留 <code>«ccr:HASH»</code> 标记,<code>retrieve(key)</code> 取回。</li>
+      <li><strong>stash 恢复</strong>:一切有损输出的原文都在 stash store,输出留 <code>«stash:HASH»</code> 标记,<code>retrieve(key)</code> 取回。</li>
     </ul>
 
-    <h2>工程结构</h2>
-    <CodeBlock code={`crates/
-  compressor-core/   # 压缩核心:纯逻辑 rlib,无 napi 依赖
-    tokenizer.rs / policy.rs / cache_control.rs / safety.rs
-    content.rs / ccr.rs / secrets.rs / mixed_content.rs
-    relevance.rs (BM25) / signals.rs (行重要性)
-    transforms/    # 各压缩器 + 无损重排 + 标签保护
-    formats/       # 三请求格式适配层
-    text_api.rs / live_zone.rs
-  compressor-node/   # napi-rs cdylib 桥(只做类型桥接,不含逻辑)
-npm/core/            # npm 包 @compressor/core(TypeScript)
-docs/PROJECT_MAP.md  # 模块职责 / 压缩管线 / 发布链 全图`} lang="text" />
+    <h2>走一个真实例子</h2>
+    <p>假设一段工具输出(tool_result)里有 2000 行构建日志,sift 会这样处理它:</p>
+    <CodeBlock code={`输入(节选):
+  [vite] building for production...
+  ✓ 1420 modules transformed.
+  warning: chunk size exceeds 500 kB (vendor.js)
+  warning: chunk size exceeds 500 kB (utils.js)
+  warning: chunk size exceeds 500 kB (ui.js)   ← 同类 warning 重复 47 次
+  ERROR in src/api/client.ts:52
+  TS2339: Property 'retry' does not exist on type 'Client'.
+
+处理过程:
+  1. detectContentType → build_output → 路由到 LogCompressor
+  2. 先试无损(Drain 模板化)→ 仍 >80%,进入有损
+  3. 错误行 / 堆栈行 全部保留;47 条同类 warning 折成 1 条模板
+  4. 原文写入 stash store,压缩处留 «stash:a3f9…» 标记
+
+输出(节选):
+  ✓ 1420 modules transformed.
+  warning: chunk size exceeds 500 kB — 重复 47 次(vendor/utils/ui/…)
+  ERROR in src/api/client.ts:52
+  TS2339: Property 'retry' does not exist on type 'Client'.`} lang="text" />
+    <p>关键在于:模型看到的错误信息一字不差,被折叠的只是重复噪音;任何时候需要完整原文,都能用 stash 标记取回。其他内容类型同理 —— diff 保留改动行、代码保留函数签名、搜索结果保留匹配上下文,牺牲的永远是「重复」,不是「信息」。</p>
 
     <h2>设计取舍</h2>
     <ul>
-      <li><strong>纯逻辑核心</strong>:压缩逻辑只进 <code>compressor-core</code>,node 桥零逻辑 —— 核心可复用(wasm、CLI 皆可接)。</li>
+      <li><strong>纯逻辑核心</strong>:压缩逻辑只进 <code>sift</code>,node 桥零逻辑 —— 核心可复用(wasm、CLI 皆可接)。</li>
       <li><strong>无损优先短路</strong>:能无损解决就不引入信息损失,≤80% 是短路阈值。</li>
       <li><strong>token 校验兜底</strong>:有损结果要过 token 估算校验,不达预期自动回退原 block。</li>
       <li><strong>缓存成本感知</strong>:policy 含缓存成本乘数,压缩决策考虑 prompt cache 经济学。</li>

@@ -21,6 +21,6 @@ exports.plainTextCase = {
     input: paragraphs.join('\n\n'),
     query: 'rate limits',
     expectedType: 'plain_text',
-    expectedPath: 'lossy-ccr',
+    expectedPath: 'lossy-stash',
     mustContain: ['Rate limits apply', 'api_key=sk-demo-'],
 };

@@ -1,13 +1,13 @@
-# @compressor/core
+# @agent-context/sift
 
 LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 LLM API **之前**，就地压缩
-消息里的大型工具输出，节省 token 与成本；被压缩的原文卸载进进程内 CCR store，可随时
+消息里的大型工具输出，节省 token 与成本；被压缩的原文卸载进进程内 stash store，可随时
 按标记取回，保证端到端无损。
 
-- 纯 Rust 核心（`compressor-core`）+ napi-rs 桥
+- 纯 Rust 核心（`sift`）+ napi-rs 桥
 - 支持三种请求格式（自动检测）：Anthropic `/v1/messages`、OpenAI Chat
   Completions、OpenAI Responses API
-- 另有 `compressText`：对单条字符串（如工具输出原文）直接压缩
+- 另有 `siftText`：对单条字符串（如工具输出原文）直接压缩
 - 消息内压缩 + 冻结前缀保护 + CCR 可恢复，三大不变量见 [PROJECT_MAP](../../docs/PROJECT_MAP.md)
 
 ## 安装（本地构建）
@@ -21,14 +21,14 @@ npm run build        # 本机平台
 # 或 npm run build:cross   # 交叉编译全部 6 平台（需 zig）
 ```
 
-产物：`dist/`（TS 编译）+ `native/compressor.<platform-triple>.node`。发布后即可
-`npm install @compressor/core`。
+产物：`dist/`（TS 编译）+ `native/sift.<platform-triple>.node`。发布后即可
+`npm install @agent-context/sift`。
 
 ## 运行场景演示
 
 仓库内提供了覆盖 JSON 数组、pretty JSON、构建日志、搜索结果、git diff、混合命令
-输出、源代码和纯文本的 8 个独立用例。它通过包根目录加载 `@compressor/core` 的公开入口，
-每个用例都会完整打印「压缩前原文」「压缩后输出」「运行指标」，并验证 CCR 恢复和
+输出、源代码和纯文本的 8 个独立用例。它通过包根目录加载 `@agent-context/sift` 的公开入口，
+每个用例都会完整打印「压缩前原文」「压缩后输出」「运行指标」，并验证 stash 恢复和
 冻结前缀保护：
 
 ```sh
@@ -41,15 +41,15 @@ npm run demo -- --save       # 运行全部并分别保存到 demo/results/
 ```
 
 演示会打印每个场景压缩前后的完整内容、字节数、压缩比、节省 token 和验证结果；CCR
-数据写入系统临时目录，不会使用正式的 `~/.compressor/ccr`。
+数据写入系统临时目录，不会使用正式的 `~/.sift/ccr`。
 
 ## 快速开始
 
 ```ts
-import { compress, retrieve } from '@compressor/core';
+import { siftRequest, retrieve } from '@agent-context/sift';
 
 // 1. 压缩（发送前）
-const result = compress(requestBody, userQuery);
+const result = siftRequest(requestBody, userQuery);
 
 // 2. 把压缩后的 body 发给 LLM API
 const response = await client.messages.create({
@@ -57,14 +57,14 @@ const response = await client.messages.create({
   messages: (result.body as any).messages,
 });
 
-// 3. 如需恢复原文：从压缩文本里提取 <<ccr:KEY>>，取回
+// 3. 如需恢复原文：从压缩文本里提取 <<stash:KEY>>，取回
 const key = extractCcrKey(result.body);
 const original = retrieve(key); // string | null
 ```
 
 ## API
 
-### `compress(body, query?)`
+### `siftRequest(body, query?)`
 
 就地压缩 body 的 **live zone**（最后一条 user 消息及之前、冻结前缀之后的可变区）。
 格式自动检测（[`detectRequestFormat`](#detectrequestformatbody)）：
@@ -85,23 +85,23 @@ const original = retrieve(key); // string | null
 
 | 字段 | 含义 |
 |---|---|
-| `body` | 压缩后的 messages body（压缩文本尾部带 `<<ccr:KEY>>` 标记） |
+| `body` | 压缩后的 messages body（压缩文本尾部带 `<<stash:KEY>>` 标记） |
 | `changed` | 是否发生实际压缩 |
 | `blocksExamined` / `blocksCompressed` / `blocksReverted` | 检查 / 压缩 / 回退的 block 数 |
 | `frozenMessages` | 冻结前缀条数（cache 锚点，未触碰） |
-| `ccrStored` | 写入 CCR store 的原文条数 |
+| `stashStored` | 写入 stash store 的原文条数 |
 | `tokensSaved` | 估算节省的 token 数 |
 
 ### `retrieve(key)`
 
-按 `<<ccr:KEY>>` 里的 key 取回压缩时卸载的原文，返回 `string | null`。
+按 `<<stash:KEY>>` 里的 key 取回压缩时卸载的原文，返回 `string | null`。
 `null` 表示 key 不存在或已过期（见「限制」）。
 
-### `compressText(text, query?)`
+### `siftText(text, query?)`
 
 压缩单个字符串（不包请求体），适合在把工具输出原文送进任意 API / 存储之前处理。
-返回 `{ text, changed, lossy, ccrKey, tokensSaved }`：有损时 `text` 尾部带
-`<<ccr:KEY>>` 标记、`ccrKey` 非空，可用 `retrieve(ccrKey)` 取回原文；无损压缩
+返回 `{ text, changed, lossy, stashKey, tokensSaved }`：有损时 `text` 尾部带
+`<<stash:KEY>>` 标记、`stashKey` 非空，可用 `retrieve(stashKey)` 取回原文；无损压缩
 （如 JSON minify）时 `lossy` 为 `false` 且无标记。小于 512 字节的输入直接透传。
 
 ### `detectRequestFormat(body)`
@@ -137,28 +137,28 @@ const original = retrieve(key); // string | null
 
 - 消息都很小：单个文本块 < 512 字节会自动跳过（`MIN_BLOCK_BYTES`）。
 - 纯文本 / 源代码 / HTML：当前是 no-op（无可压的专用压缩器）。
-- 没有 CCR store 的场景：`compress` 依赖进程内 store 才能卸载原文（见下）。
+- 没有 stash store 的场景：`compress` 依赖进程内 store 才能卸载原文（见下）。
 
 ## 有损压缩与恢复（CCR）
 
-压缩是有损的（丢弃了部分行/样本），但原文会被卸载进 CCR store，压缩文本尾部追加
-`<<ccr:KEY>>` 标记，其中 `KEY` 是原文的 BLAKE3 哈希（24 hex）。
+压缩是有损的（丢弃了部分行/样本），但原文会被卸载进 stash store，压缩文本尾部追加
+`<<stash:KEY>>` 标记，其中 `KEY` 是原文的 BLAKE3 哈希（24 hex）。
 
 ```
-原文 ──compress──▶ 压缩文本 + <<ccr:KEY>>        （发给 API，省 token）
+原文 ──compress──▶ 压缩文本 + <<stash:KEY>>        （发给 API，省 token）
                         │
                         └── store.put(KEY, 原文)   （留在进程内）
 
-需要原文时：从消息里找 <<ccr:KEY>> → retrieve(KEY) → 原文
+需要原文时：从消息里找 <<stash:KEY>> → retrieve(KEY) → 原文
 ```
 
 典型恢复流程：模型看到压缩内容后说「我需要看完整数据」，应用从最近的压缩消息里
-提取 `<<ccr:KEY>>`，`retrieve` 取回原文，把原文补发给模型。
+提取 `<<stash:KEY>>`，`retrieve` 取回原文，把原文补发给模型。
 
 提取 key 的辅助：
 
 ```ts
-const CCR_RE = /<<ccr:([0-9a-f]+)>>/g;
+const CCR_RE = /<<stash:([0-9a-f]+)>>/g;
 function extractCcrKeys(body: any): string[] {
   const text = JSON.stringify(body);
   return [...text.matchAll(CCR_RE)].map((m) => m[1]);
@@ -173,8 +173,8 @@ function extractCcrKeys(body: any): string[] {
 
 ## 限制
 
-- **CCR store 是落盘文件**（`FileCcrStore`）：每个 key 一个文件，默认目录
-  `~/.compressor/ccr`（环境变量 `COMPRESSOR_CCR_DIR` 可覆盖），TTL 1800 秒（按文件
+- **stash store 是落盘文件**（`FileCcrStore`）：每个 key 一个文件，默认目录
+  `~/.sift/ccr`（环境变量 `COMPRESSOR_CCR_DIR` 可覆盖），TTL 1800 秒（按文件
   mtime 判定，`get` 时惰性删除过期项）。单机重启不丢、同机多进程互见。
   **多实例 / 集群**需把该目录挂到共享文件系统（NFS / 对象存储），或改用外部
   store 后端（Redis 等，`CcrStore` trait 已抽象好），否则不同机器取不到对方的原文。

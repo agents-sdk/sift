@@ -1,7 +1,7 @@
 import * as assert from 'node:assert';
 import {
-  compress,
-  compressText,
+  siftRequest,
+  siftText,
   retrieve,
   detectContentType,
   detectRequestFormat,
@@ -31,21 +31,21 @@ const body = {
   ],
 };
 
-const result = compress(body);
+const result = siftRequest(body);
 
 // 冻结前缀未触碰
 assert.strictEqual(result.frozenMessages, 1);
 // 大 JSON 工具结果被压缩
 assert.strictEqual(result.changed, true);
 assert.ok(result.blocksCompressed >= 1, `blocksCompressed=${result.blocksCompressed}`);
-assert.ok(result.ccrStored >= 1, `ccrStored=${result.ccrStored}`);
+assert.ok(result.stashStored >= 1, `stashStored=${result.stashStored}`);
 assert.ok(result.tokensSaved > 0, `tokensSaved=${result.tokensSaved}`);
 
 // 压缩后的 body 含取回标记，且可通过 retrieve 恢复原文
 const compressedContent = (result.body as any).messages[2].content[0].content as string;
-assert.ok(compressedContent.includes('<<ccr:'), '应含 <<ccr: 标记');
+assert.ok(compressedContent.includes('<<stash:'), '应含 <<stash: 标记');
 const key = compressedContent.slice(
-  compressedContent.lastIndexOf('<<ccr:') + '<<ccr:'.length,
+  compressedContent.lastIndexOf('<<stash:') + '<<stash:'.length,
   compressedContent.length - 2,
 );
 assert.strictEqual(retrieve(key), bigJson);
@@ -71,13 +71,13 @@ const chatBody = {
   ],
 };
 assert.strictEqual(detectRequestFormat(chatBody), 'chat_completions');
-const chatResult = compress(chatBody);
+const chatResult = siftRequest(chatBody);
 assert.strictEqual(chatResult.frozenMessages, 0, 'OpenAI 格式无冻结前缀');
 assert.ok(chatResult.changed, 'tool 消息应被压缩');
 const chatToolContent = (chatResult.body as any).messages[2].content as string;
-assert.ok(chatToolContent.includes('<<ccr:'), 'tool content 应含取回标记');
+assert.ok(chatToolContent.includes('<<stash:'), 'tool content 应含取回标记');
 const chatKey = chatToolContent.slice(
-  chatToolContent.lastIndexOf('<<ccr:') + '<<ccr:'.length,
+  chatToolContent.lastIndexOf('<<stash:') + '<<stash:'.length,
   chatToolContent.length - 2,
 );
 assert.strictEqual(retrieve(chatKey), bigJson);
@@ -93,13 +93,13 @@ const responsesBody = {
   ],
 };
 assert.strictEqual(detectRequestFormat(responsesBody), 'responses');
-const responsesResult = compress(responsesBody);
+const responsesResult = siftRequest(responsesBody);
 assert.strictEqual(responsesResult.frozenMessages, 0);
 assert.ok(responsesResult.changed, 'function_call_output 应被压缩');
 const fnOutput = (responsesResult.body as any).input[2].output as string;
-assert.ok(fnOutput.includes('<<ccr:'), 'output 应含取回标记');
+assert.ok(fnOutput.includes('<<stash:'), 'output 应含取回标记');
 const fnKey = fnOutput.slice(
-  fnOutput.lastIndexOf('<<ccr:') + '<<ccr:'.length,
+  fnOutput.lastIndexOf('<<stash:') + '<<stash:'.length,
   fnOutput.length - 2,
 );
 assert.strictEqual(retrieve(fnKey), bigJson);
@@ -107,18 +107,18 @@ assert.strictEqual(retrieve(fnKey), bigJson);
 assert.strictEqual((responsesResult.body as any).input[1].arguments, '{}');
 
 // ── 裸文本压缩 ──
-const textResult = compressText(bigJson);
+const textResult = siftText(bigJson);
 if (textResult.lossy) {
-  assert.ok(textResult.ccrKey, '有损结果应带 ccrKey');
-  assert.strictEqual(retrieve(textResult.ccrKey!), bigJson);
+  assert.ok(textResult.stashKey, '有损结果应带 stashKey');
+  assert.strictEqual(retrieve(textResult.stashKey!), bigJson);
 } else {
   assert.ok(textResult.changed, '大 JSON 应至少无损压缩');
-  assert.ok(!textResult.text.includes('<<ccr:'), '无损结果不应含标记');
+  assert.ok(!textResult.text.includes('<<stash:'), '无损结果不应含标记');
 }
 // 小文本透传
-assert.strictEqual(compressText('tiny').changed, false);
+assert.strictEqual(siftText('tiny').changed, false);
 
 // Anthropic 格式检测（含 cache_control）
 assert.strictEqual(detectRequestFormat(body), 'anthropic');
 
-console.log('✓ @compressor/core smoke test passed');
+console.log('✓ @agent-context/sift smoke test passed');

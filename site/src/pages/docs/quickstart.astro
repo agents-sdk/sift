@@ -3,28 +3,28 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import CodeBlock from '../../components/CodeBlock.astro';
 ---
 
-<BaseLayout title="快速上手 — compressor 文档">
+<BaseLayout title="快速上手 — sift 文档">
   <article class="doc container">
     <span class="eyebrow">Docs</span>
     <h1>快速上手</h1>
-    <p>compressor 以 npm 包 <code>@compressor/core</code> 提供 Node.js API,核心为纯 Rust(napi-rs 绑定)。安装时自动命中当前平台的二进制子包。适合"上下文里塞了大量机器产出"的场景——这些内容 token 多、冗余高,但真正对任务有用的信息密度低。</p>
+    <p>sift 以 npm 包 <code>@agent-context/sift</code> 提供 Node.js API,核心为纯 Rust(napi-rs 绑定)。安装时自动命中当前平台的二进制子包。适合"上下文里塞了大量机器产出"的场景——这些内容 token 多、冗余高,但真正对任务有用的信息密度低。</p>
 
     <h2>安装</h2>
-    <CodeBlock code={`npm install @compressor/core`} lang="bash" command />
+    <CodeBlock code={`npm install @agent-context/sift`} lang="bash" command />
 
     <h2>最小示例</h2>
-    <CodeBlock code={`import { compress, compressText, retrieve } from "@compressor/core";
+    <CodeBlock code={`import { siftRequest, siftText, retrieve } from "@agent-context/sift";
 
 // 1. 压缩请求体:自动检测 Anthropic /v1/messages、
 //    OpenAI Chat Completions、OpenAI Responses 三种格式
-const { body, changed, tokensSaved } = compress(requestBody, "用户当前的问题");
+const { body, changed, tokensSaved } = siftRequest(requestBody, "用户当前的问题");
 
 // 2. 或直接压缩单条字符串(如工具输出原文)
-const r = compressText(toolOutput, "error mismatched");
+const r = siftText(toolOutput, "error mismatched");
 
 if (r.lossy) {
-  // 有损:原文已入 CCR store,输出尾部带 «ccr:HASH» 标记
-  const original = retrieve(r.ccrKey!);
+  // 有损:原文已入 stash store,输出尾部带 «stash:HASH» 标记
+  const original = retrieve(r.stashKey!);
 }`} lang="ts" />
 
     <h2>典型场景</h2>
@@ -34,21 +34,21 @@ if (r.lossy) {
     <CodeBlock code={`for (const step of agentSteps) {
   const out = await runTool(step);
   // 送进模型前先压缩,query 用当前任务描述
-  const r = compressText(out, step.intent);
+  const r = siftText(out, step.intent);
   messages.push({ role: "tool", content: r.text });
-  if (r.lossy) keepForRecovery(r.ccrKey);
+  if (r.lossy) keepForRecovery(r.stashKey);
 }`} lang="ts" />
     <p>要点:每步都传 <code>query</code>(当前意图),压缩器会保留与任务相关的行(错误、匹配项、改动),丢弃重复样板。</p>
 
     <h3>长对话的历史消息</h3>
     <p>对话越长,每轮的输入成本越高。在发送请求前对整个 body 跑一遍 <code>compress</code>,早期消息里的日志、JSON、diff 会被压缩,而最近的轮次与冻结前缀保持原样。</p>
     <CodeBlock code={`// 发送前一步,自动检测 Anthropic / OpenAI 格式
-const { body, tokensSaved, frozenMessages } = compress(requestBody, userQuestion);
+const { body, tokensSaved, frozenMessages } = siftRequest(requestBody, userQuestion);
 await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} lang="ts" />
-    <p>要点:<code>cache_control</code> 以下的消息是缓存锚点,compressor 一个字节都不动,不会破坏你的 prompt cache 命中。</p>
+    <p>要点:<code>cache_control</code> 以下的消息是缓存锚点,sift 一个字节都不动,不会破坏你的 prompt cache 命中。</p>
 
     <h3>把大文件喂给 LLM</h3>
-    <p>分析线上问题、读监控数据时,原始文件往往几十 KB 起步。先 <code>compressText</code> 再送入:</p>
+    <p>分析线上问题、读监控数据时,原始文件往往几十 KB 起步。先 <code>siftText</code> 再送入:</p>
     <ul>
       <li><strong>监控 / 导出的 JSON 数组</strong>:schema 去重 + 采样,异常行优先保留;</li>
       <li><strong>构建 / 测试日志</strong>:错误与堆栈全保留,重复 warning 折叠成一条;</li>
@@ -57,7 +57,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     </ul>
 
     <h2>API 一览</h2>
-    <h3><code>compress(body, query?)</code></h3>
+    <h3><code>siftRequest(body, query?)</code></h3>
     <p>压缩请求 body(就地透传或压缩),返回:</p>
     <table>
       <tr><th>字段</th><th>说明</th></tr>
@@ -65,15 +65,15 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
       <tr><td><code>changed</code></td><td>是否发生了实际压缩</td></tr>
       <tr><td><code>blocksExamined / blocksCompressed / blocksReverted</code></td><td>检查 / 压缩 / 因 token 校验回退的 text block 数</td></tr>
       <tr><td><code>frozenMessages</code></td><td>冻结前缀消息条数(cache 锚点,未被触碰;OpenAI 格式恒为 0)</td></tr>
-      <tr><td><code>ccrStored</code></td><td>写入 CCR store 的原文条数</td></tr>
+      <tr><td><code>stashStored</code></td><td>写入 stash store 的原文条数</td></tr>
       <tr><td><code>tokensSaved</code></td><td>估算节省的 token 数</td></tr>
     </table>
 
-    <h3><code>compressText(text, query?)</code></h3>
-    <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / ccrKey / tokensSaved</code>。内容类型自动检测分发,单 block 最小 512 字节才参与压缩。</p>
+    <h3><code>siftText(text, query?)</code></h3>
+    <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / stashKey / tokensSaved</code>。内容类型自动检测分发,单 block 最小 512 字节才参与压缩。</p>
 
     <h3><code>retrieve(key)</code></h3>
-    <p>按 <code>ccrKey</code> 从 CCR store 取回有损压缩的原文,端到端无损。</p>
+    <p>按 <code>stashKey</code> 从 stash store 取回有损压缩的原文,端到端无损。</p>
 
     <h3><code>detectContentType(text)</code> / <code>detectRequestFormat(body)</code></h3>
     <p>类型探测:返回内容类型(JSON 数组 / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
@@ -81,7 +81,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <h2>最佳实践</h2>
     <ul>
       <li><strong>总是传 query</strong>:用户当前的问题、Agent 当前步骤的意图。相关性打分依赖它,不传则保留策略更"盲"。</li>
-      <li><strong>保留 ccrKey</strong>:有损压缩的原文在 CCR store 里,把 key 记下来,模型追问细节时用 <code>retrieve(key)</code> 取回原文再注入,端到端无损。</li>
+      <li><strong>保留 stashKey</strong>:有损压缩的原文在 stash store 里,把 key 记下来,模型追问细节时用 <code>retrieve(key)</code> 取回原文再注入,端到端无损。</li>
       <li><strong>不用担心理解偏差</strong>:压缩只发生在消息内部,对话结构、tool_use/tool_result 配对完整保留;API key 等高熵凭证被强制识别并保留。</li>
       <li><strong>短内容不用管</strong>:单 block 小于 512 字节不参与压缩,直接透传,零开销。</li>
     </ul>

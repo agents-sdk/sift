@@ -1,14 +1,14 @@
 {
-  "name": "@compressor/core",
-  "version": "0.1.0",
-  "description": "LLM 上下文压缩核心（Rust compressor-core 的 Node 绑定）",
+  "name": "@agent-context/sift",
+  "version": "0.0.1-alpha.0",
+  "description": "LLM 上下文压缩核心（Rust sift 的 Node 绑定）",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build:native": "napi build --platform --release --manifest-path ../../crates/compressor-node/Cargo.toml --output-dir native && rm -f native/index.d.ts",
+    "build:native": "napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.toml --output-dir native && rm -f native/index.d.ts",
     "build:cross": "bash ../../scripts/build-cross.sh && node ../../scripts/gen-platform-packages.mjs",
     "build:ts": "tsc -p tsconfig.json",
     "build": "npm run build:native && npm run build:ts",
@@ -18,7 +18,7 @@
     "prepublishOnly": "npm run build:cross && npm run build:ts"
   },
   "napi": {
-    "binaryName": "compressor",
+    "binaryName": "sift",
     "targets": [
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",
@@ -42,11 +42,11 @@
   },
   "license": "Apache-2.0",
   "optionalDependencies": {
-    "@compressor/core-darwin-arm64": "0.1.0",
-    "@compressor/core-darwin-x64": "0.1.0",
-    "@compressor/core-linux-arm64-gnu": "0.1.0",
-    "@compressor/core-linux-arm64-musl": "0.1.0",
-    "@compressor/core-linux-x64-gnu": "0.1.0",
-    "@compressor/core-linux-x64-musl": "0.1.0"
+    "@agent-context/sift-darwin-arm64": "0.0.1-alpha.0",
+    "@agent-context/sift-darwin-x64": "0.0.1-alpha.0",
+    "@agent-context/sift-linux-arm64-gnu": "0.0.1-alpha.0",
+    "@agent-context/sift-linux-arm64-musl": "0.0.1-alpha.0",
+    "@agent-context/sift-linux-x64-gnu": "0.0.1-alpha.0",
+    "@agent-context/sift-linux-x64-musl": "0.0.1-alpha.0"
   }
 }

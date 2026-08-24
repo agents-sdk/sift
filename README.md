@@ -1,6 +1,6 @@
 # compressor
 
-LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节省 token 与缓存成本。核心为纯 Rust 实现，通过 napi-rs 以 npm 包 **`@compressor/core`** 提供 Node.js API。
+LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节省 token 与缓存成本。核心为纯 Rust 实现，通过 napi-rs 以 npm 包 **`@agent-context/sift`** 提供 Node.js API。
 
 ## 特性
 
@@ -21,11 +21,11 @@ LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节�
 ## 安装与使用
 
 ```sh
-npm install @compressor/core
+npm install @agent-context/sift
 ```
 
 ```ts
-import { compress, compressText, retrieve } from "@compressor/core";
+import { compress, compressText, retrieve } from "@agent-context/sift";
 
 // 请求体压缩（自动检测 Anthropic / OpenAI 格式）
 const { body, changed, tokensSaved } = compress(requestBody, "用户当前的问题");
@@ -43,9 +43,9 @@ const original = retrieve(r.ccrKey!);
 
 ```
 crates/
-  compressor-core/   # 压缩核心库（纯逻辑，无 napi 依赖）
-  compressor-node/   # napi-rs cdylib 桥
-npm/core/            # npm 包 @compressor/core（TypeScript）
+  sift/   # 压缩核心库（纯逻辑，无 napi 依赖）
+  sift-node/   # napi-rs cdylib 桥
+npm/core/            # npm 包 @agent-context/sift（TypeScript）
 docs/PROJECT_MAP.md  # 工程地图：模块职责、压缩管线、发布链
 tests/fixtures/      # 压缩输入/输出 golden 样本
 ```

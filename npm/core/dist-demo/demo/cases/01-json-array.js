@@ -11,10 +11,10 @@ const rows = Array.from({ length: 200 }, (_, i) => ({
 exports.jsonArrayCase = {
     id: 'json-array',
     title: 'JSON 数组工具输出',
-    description: 'smart_crusher 保留异常项和代表性样本，其余原文写入 CCR。',
+    description: 'smart_crusher 保留异常项和代表性样本，其余原文写入 stash。',
     input: JSON.stringify(rows),
     query: 'list open issues and worker pool panics',
     expectedType: 'json_array',
-    expectedPath: 'lossy-ccr',
+    expectedPath: 'lossy-stash',
     mustContain: ['panic in worker pool', '"state": "open"'],
 };

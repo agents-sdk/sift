@@ -10,8 +10,8 @@ export interface DemoResult {
     blocksCompressed: number;
     blocksReverted: number;
     frozenMessages: number;
-    ccrStored: number;
-    ccrKey?: string;
+    stashStored: number;
+    stashKey?: string;
 }
 /** 把一次真实运行保存为便于并排查看的 Markdown。 */
 export declare function renderResultMarkdown(demo: DemoCase, result: DemoResult): string;

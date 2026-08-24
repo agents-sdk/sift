@@ -30,7 +30,7 @@ rustup target add \
   x86_64-unknown-linux-musl \
   aarch64-unknown-linux-musl
 
-NAPI_ARGS="--platform --release --manifest-path ../../crates/compressor-node/Cargo.toml --output-dir native"
+NAPI_ARGS="--platform --release --manifest-path ../../crates/sift-node/Cargo.toml --output-dir native"
 
 # macOS：本机 arm64 + 交叉 x64
 npx napi build $NAPI_ARGS --target aarch64-apple-darwin

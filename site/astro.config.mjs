@@ -8,16 +8,16 @@ export default defineConfig({
   output: 'server',
   adapter: vercel({
     includeFiles: [
-      './vendor/compressor-core/dist/index.js',
-      './vendor/compressor-core/native/compressor.linux-x64-gnu.node',
-      './vendor/compressor-core/native/compressor.darwin-arm64.node',
+      './vendor/sift/dist/index.js',
+      './vendor/sift/native/sift.linux-x64-gnu.node',
+      './vendor/sift/native/sift.darwin-arm64.node',
     ],
   }),
   integrations: [react()],
   vite: {
     ssr: {
       // napi 动态加载 native 路径,保持 external,勿打包
-      external: ['@compressor/core'],
+      external: ['@agent-context/sift'],
     },
   },
 });

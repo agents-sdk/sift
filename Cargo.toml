@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/compressor-core", "crates/compressor-node"]
+members = ["crates/sift", "crates/sift-node"]
 
 [workspace.package]
 edition = "2021"
@@ -16,7 +16,7 @@ serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision
 thiserror = "2"
 anyhow = "1"
 blake3 = "1"
-# napi-rs：Rust cdylib → Node 原生模块，npm 包 @compressor/core 的桥
+# napi-rs：Rust cdylib → Node 原生模块，npm 包 @agent-context/sift 的桥
 napi = { version = "2", default-features = false, features = ["napi4", "serde-json"] }
 napi-derive = "2"
 
@@ -32,4 +32,4 @@ tree-sitter-java = "=0.23.5"
 tree-sitter-c = "=0.24.2"
 tree-sitter-cpp = "=0.23.4"
 
-compressor-core = { path = "crates/compressor-core" }
+sift = { path = "crates/sift" }
