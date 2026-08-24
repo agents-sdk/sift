@@ -94,7 +94,7 @@ pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransf
 }
 
 /// 按内容类型构造对应的无损重排器实例（用默认配置）。
-/// 无损重排先于有损压缩执行：剥离空白/挖模板，不丢信息、无需 CCR。
+/// 无损重排先于有损压缩执行：剥离空白/挖模板，不丢信息、无需 stash。
 pub fn reformat_for(content_type: ContentType) -> Option<Box<dyn ReformatTransform>> {
     match content_type {
         ContentType::JsonArray => Some(Box::new(reformats::JsonMinifier)),

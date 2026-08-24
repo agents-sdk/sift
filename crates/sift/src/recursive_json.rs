@@ -3,7 +3,7 @@
 //! 非 span 字节逐字保留。
 //!
 //! stash 安全性：本模块只负责定位与替换；replace 回调走的是与整块 JSON
-//! 相同的分发路径，CCR 按 hash 取键、与位置无关，故嵌入 span 内产生的
+//! 相同的分发路径，stash 按 hash 取键、与位置无关，故嵌入 span 内产生的
 //! `<<stash:HASH>>` 标记同样可恢复。非 span 字节逐字保留，绝不跨边界丢内容。
 
 use serde_json::Value;

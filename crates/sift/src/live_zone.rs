@@ -128,7 +128,7 @@ pub fn compress_live_zone(
 /// 单 block 的压缩结果。
 pub(crate) enum BlockOutcome {
     Unchanged,
-    /// 无损 reformat 结果（无需 CCR，可完全重建）。
+    /// 无损 reformat 结果（无需 stash，可完全重建）。
     Lossless(String, usize),
     /// 有损压缩结果：原文已在 store，输出带取回标记。
     Lossy {
@@ -222,7 +222,7 @@ pub(crate) fn process_block_text(
     let (protected_text, tag_map) = protector.protect(text);
 
     // 阶段 1：无损重排。
-    // JSON 空白剥离 / 日志模板挖掘——输出可完全重建，无需 CCR。
+    // JSON 空白剥离 / 日志模板挖掘——输出可完全重建，无需 stash。
     let mut current = protected_text.clone();
     let mut reformatted = false;
     if let Some(reformatter) = reformat_for(crate::content::detect_content_type(&current)) {
@@ -378,7 +378,7 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.changed, "outcome={:?}", outcome);
-        assert!(outcome.stash_stored >= 1, "混合路由应有损+CCR: {outcome:?}");
+        assert!(outcome.stash_stored >= 1, "混合路由应有损+stash: {outcome:?}");
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
         // 文本段保留、JSON 段被压、含取回标记。
         assert!(txt.contains("$ gh api repos/x/y/issues"));
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn lossless_reformat_short_circuits_stash() {
         // pretty-print 的 JSON（大量缩进空白）：JsonMinifier 无损剥离后
-        // ≤80% 体积 → 走 Lossless 短路，不写 CCR、无取回标记。
+        // ≤80% 体积 → 走 Lossless 短路，不写 stash、无取回标记。
         let mut rows = Vec::new();
         for i in 0..50 {
             rows.push(json!({"id": i, "name": format!("item-{}", i), "status": "ok"}));
@@ -410,7 +410,7 @@ mod tests {
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.changed, "outcome={:?}", outcome);
         // 无损路径：不写 stash store。
-        assert_eq!(outcome.stash_stored, 0, "无损短路不应写 CCR: {outcome:?}");
+        assert_eq!(outcome.stash_stored, 0, "无损短路不应写 stash: {outcome:?}");
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
         // 无损结果不含取回标记，且仍可解析回等价 JSON。
         assert!(!txt.contains("<<stash:"), "无损路径不应有标记: {txt}");

@@ -66,7 +66,7 @@ export interface CompressResult {
   blocksReverted: number;
   /** 冻结前缀消息条数（cache 锚点，未被触碰；OpenAI 格式恒为 0） */
   frozenMessages: number;
-  /** 写入 CCR store 的原文条数 */
+  /** 写入 stash store 的原文条数 */
   stashStored: number;
   /** 估算节省的 token 数 */
   tokensSaved: number;
@@ -81,7 +81,7 @@ export interface TextCompressResult {
   text: string;
   /** 是否发生了实际压缩 */
   changed: boolean;
-  /** 是否有损（原文已写入 CCR store，可用 retrieve 取回） */
+  /** 是否有损（原文已写入 stash store，可用 retrieve 取回） */
   lossy: boolean;
   /** 有损时的取回 key */
   stashKey: string | null;

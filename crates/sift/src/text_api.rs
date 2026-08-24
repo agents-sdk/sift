@@ -136,7 +136,7 @@ mod tests {
         let store = InMemoryStashStore::new();
         let r = compress_text(&pretty, Some(&store), None);
         assert!(r.changed);
-        assert!(!r.lossy, "无损短路不应写 CCR: {r:?}");
+        assert!(!r.lossy, "无损短路不应写 stash: {r:?}");
         assert!(r.stash_key.is_none());
         assert!(!r.text.contains("<<stash:"));
         // 无损结果仍可解析回等价 JSON。

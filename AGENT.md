@@ -1,6 +1,6 @@
 # AGENT.md
 
-LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节省 token 与缓存成本。
+sift — LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节省 token 与缓存成本。
 
 ## 必读
 
@@ -10,7 +10,7 @@ LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节省 token 
 
 1. 只在消息内压缩，绝不跨消息丢弃内容
 2. 冻结前缀（cache_control 标记以下）字节不动
-3. 有损压缩必须经 stash 可恢复（`<<stash:HASH>>` 标记 + store 原文）
+3. 有损压缩必须经 stash 可恢复（`«stash:HASH»` 标记 + store 原文）
 
 ## 常用命令
 
@@ -33,7 +33,7 @@ build 矩阵编各平台 → 生成 `@agent-context/sift-<platform>` 子包 → 
 ## 约定
 
 - 逻辑只进 `sift`；`sift-node` 只做类型桥接，不含压缩逻辑
-- 新压缩器实现 `ReformatTransform`（无损）或 `OffloadTransform`（有损+CCR），
+- 新压缩器实现 `ReformatTransform`（无损）或 `OffloadTransform`（有损+stash），
   并在 `transforms::dispatch_compressor` 注册
 - 新特性先写测试再写实现（golden 样本放 `tests/fixtures/`）
 - 注释与文档用中文，标识符用英文

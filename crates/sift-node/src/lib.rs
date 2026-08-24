@@ -1,4 +1,4 @@
-//! @compressor/core 的 Node 原生模块。
+////! @agent-context/sift 的 Node 原生模块。
 //!
 //! napi-rs 桥：把 sift 的压缩能力暴露给 JS/TS。
 //! 构建产物为 `.node` cdylib，由 npm 包的 dist/index.js 加载。
@@ -34,9 +34,9 @@ fn stash_dir() -> PathBuf {
         }
     }
     if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".compressor").join("stash");
+        return PathBuf::from(home).join(".sift").join("stash");
     }
-    std::env::temp_dir().join("compressor-stash")
+    std::env::temp_dir().join("sift-stash")
 }
 
 /// 压缩请求 body 的结果。

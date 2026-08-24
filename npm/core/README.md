@@ -8,7 +8,7 @@ LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 L
 - 支持三种请求格式（自动检测）：Anthropic `/v1/messages`、OpenAI Chat
   Completions、OpenAI Responses API
 - 另有 `siftText`：对单条字符串（如工具输出原文）直接压缩
-- 消息内压缩 + 冻结前缀保护 + CCR 可恢复，三大不变量见 [PROJECT_MAP](../../docs/PROJECT_MAP.md)
+- 消息内压缩 + 冻结前缀保护 + stash 可恢复，三大不变量见 [PROJECT_MAP](../../docs/PROJECT_MAP.md)
 
 ## 安装（本地构建）
 
@@ -40,8 +40,8 @@ npm run demo                 # 按顺序运行全部用例
 npm run demo -- --save       # 运行全部并分别保存到 demo/results/
 ```
 
-演示会打印每个场景压缩前后的完整内容、字节数、压缩比、节省 token 和验证结果；CCR
-数据写入系统临时目录，不会使用正式的 `~/.sift/ccr`。
+演示会打印每个场景压缩前后的完整内容、字节数、压缩比、节省 token 和验证结果；stash
+数据写入系统临时目录，不会使用正式的 `~/.sift/stash`。
 
 ## 快速开始
 
@@ -58,7 +58,7 @@ const response = await client.messages.create({
 });
 
 // 3. 如需恢复原文：从压缩文本里提取 <<stash:KEY>>，取回
-const key = extractCcrKey(result.body);
+const key = extractStashKeys(result.body)[0];
 const original = retrieve(key); // string | null
 ```
 
@@ -114,7 +114,7 @@ const original = retrieve(key); // string | null
 
 返回内容类型：`json_array | build_output | search_results | git_diff | source_code | plain_text | html`，便于诊断。
 
-## 什么时候调用 `compress`
+## 什么时候调用 `siftRequest`
 
 一句话：**在任何 LLM 客户端把请求发给 API 之前，对 messages 做一次拦截压缩**。
 
@@ -130,16 +130,16 @@ const original = retrieve(key); // string | null
 适合的接入位置：
 
 - **代理 / 中间件**：放在 LLM 客户端与 API 之间对出站请求统一压缩。
-- **应用层发送前**：直接 SDK 调用前，把 `messages` 传给 `compress`。
+- **应用层发送前**：直接 SDK 调用前，把 `messages` 传给 `siftRequest`。
 - **边缘函数 / 无服务器**：发送前压缩，降低首字节与计费 token。
 
 **不需要调用**的情况：
 
 - 消息都很小：单个文本块 < 512 字节会自动跳过（`MIN_BLOCK_BYTES`）。
 - 纯文本 / 源代码 / HTML：当前是 no-op（无可压的专用压缩器）。
-- 没有 stash store 的场景：`compress` 依赖进程内 store 才能卸载原文（见下）。
+- 没有 stash store 的场景：`siftRequest` 依赖进程内 store 才能卸载原文（见下）。
 
-## 有损压缩与恢复（CCR）
+## 有损压缩与恢复（stash）
 
 压缩是有损的（丢弃了部分行/样本），但原文会被卸载进 stash store，压缩文本尾部追加
 `<<stash:KEY>>` 标记，其中 `KEY` 是原文的 BLAKE3 哈希（24 hex）。
@@ -158,26 +158,26 @@ const original = retrieve(key); // string | null
 提取 key 的辅助：
 
 ```ts
-const CCR_RE = /<<stash:([0-9a-f]+)>>/g;
-function extractCcrKeys(body: any): string[] {
+const STASH_RE = /<<stash:([0-9a-f]+)>>/g;
+function extractStashKeys(body: any): string[] {
   const text = JSON.stringify(body);
-  return [...text.matchAll(CCR_RE)].map((m) => m[1]);
+  return [...text.matchAll(STASH_RE)].map((m) => m[1]);
 }
 ```
 
 ## 与 prompt cache 的关系（cache 安全）
 
-`compress` 只改 **live zone**（冻结前缀之后、最后一条 user 消息为止的可变区）。
+`siftRequest` 只改 **live zone**（冻结前缀之后、最后一条 user 消息为止的可变区）。
 `cache_control` 标记以下的**冻结前缀字节不动**，因此不会破坏 prompt cache 的命中。
 `result.frozenMessages` 报告了被保护的冻结条数。
 
 ## 限制
 
-- **stash store 是落盘文件**（`FileCcrStore`）：每个 key 一个文件，默认目录
-  `~/.sift/ccr`（环境变量 `COMPRESSOR_CCR_DIR` 可覆盖），TTL 1800 秒（按文件
+- **stash store 是落盘文件**（`FileStashStore`）：每个 key 一个文件，默认目录
+  `~/.sift/stash`（环境变量 `SIFT_STASH_DIR` 可覆盖），TTL 1800 秒（按文件
   mtime 判定，`get` 时惰性删除过期项）。单机重启不丢、同机多进程互见。
   **多实例 / 集群**需把该目录挂到共享文件系统（NFS / 对象存储），或改用外部
-  store 后端（Redis 等，`CcrStore` trait 已抽象好），否则不同机器取不到对方的原文。
+  store 后端（Redis 等，`StashStore` trait 已抽象好），否则不同机器取不到对方的原文。
 - 压缩的是**已解析的 JSON 对象**，不是原始 HTTP 字节。若在代理层做「字节级 cache SHA
   不变」的区间手术，需在更高层处理（见 PROJECT_MAP 待办）。
 - 当前 `tokensSaved` 用字节/4 × 1.2 粗估，仅作参考。

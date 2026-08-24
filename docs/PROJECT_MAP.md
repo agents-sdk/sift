@@ -82,12 +82,12 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 
 ## npm 包对外 API（@agent-context/sift）
 
-> 完整使用说明（安装、快速开始、调用场景、CCR 恢复流程）见 [`npm/core/README.md`](../npm/core/README.md)。
+> 完整使用说明（安装、快速开始、调用场景、stash 恢复流程）见 [`npm/core/README.md`](../npm/core/README.md)。
 
 - `siftRequest(body, query?) -> { body, changed, blocksExamined, blocksCompressed, blocksReverted, frozenMessages, stashStored, tokensSaved }`
   （自动检测格式：Anthropic /v1/messages、OpenAI Chat Completions、OpenAI Responses API）
 - `siftText(text, query?) -> { text, changed, lossy, stashKey, tokensSaved }`（单条字符串压缩）
-- `retrieve(key) -> string | null`（按 `<<ccr:KEY>>` 取回压缩时卸载的原文）
+- `retrieve(key) -> string | null`（按 `<<stash:KEY>>` 取回压缩时卸载的原文）
 - `detectContentType(text) -> 'json_array' | 'build_output' | ...`
 - `detectRequestFormat(body) -> 'anthropic' | 'chat_completions' | 'responses' | 'unknown'`
 
@@ -119,7 +119,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
       3. tokenizer 校验（压缩后 token ≥ 原值则回退，保留无损结果）
       4. tag_protector::restore + 原文写 stash store + 追加 <<stash:HASH>> 标记
          （text_crusher 段落选择含 secrets 熵保密：API key 段强制保留）
-  → LiveZoneOutcome（changed / blocks / tokens_saved / ccr_stored）
+  → LiveZoneOutcome（changed / blocks / tokens_saved / stash_stored）
 ```
 
 > 边界说明：本 crate 的输入是已解析的 `serde_json::Value`，压缩就地修改 text 字段
@@ -133,6 +133,6 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 - [ ] parity golden 测试（可参考 `references/headroom/tests/parity/` 的样本格式）
 - [x] napi-rs CLI 集成（`napi build --platform` + 按平台加载）
 - [x] 跨平台编译（`npm run build:cross` 产出 6 平台 `.node`：darwin/linux × arm64/x64 × gnu/musl）
-- [x] stash store 落盘持久化（`FileStashStore`，目录 `SIFT_CCR_DIR`/`~/.sift/ccr`，重启不丢）
+- [x] stash store 落盘持久化（`FileStashStore`，目录 `SIFT_STASH_DIR`/`~/.sift/stash`，重启不丢）
 - [x] 多平台发布流水线（平台子包 + GitHub Actions 矩阵，`v*` tag 触发 release）
 - [ ] 集群共享存储后端（Redis / 对象存储，`StashStore` trait 已抽象好，替换 `FileStashStore` 即可）
