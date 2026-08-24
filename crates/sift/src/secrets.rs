@@ -67,6 +67,16 @@ pub fn find_secret_lines(text: &str) -> Vec<usize> {
         .collect()
 }
 
+/// 在结构化或混合内容中寻找 secret-like 连续 token。
+///
+/// 与 [`find_secret_lines`] 的空白切分不同，这里只把常见凭证字符
+/// `[A-Za-z0-9_-]` 视为一个候选，避免把整行 compact JSON、grep 结果或 URL
+/// 当成一个超长高熵 token 而误判。
+pub fn contains_secret_token(text: &str) -> bool {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .any(is_secret_like)
+}
+
 // ────────────────────────────── 单元测试 ──────────────────────────────
 
 #[cfg(test)]
@@ -186,5 +196,14 @@ mod tests {
             "91f0d3ab62c4e8577a3b9c1d4e5f6071"
         );
         assert_eq!(find_secret_lines(&text), vec![0]);
+    }
+
+    #[test]
+    fn structured_secret_scan_avoids_compact_json_false_positive() {
+        let json = r#"[{"id":1,"name":"item-1","status":"ok"},{"id":2,"name":"item-2","status":"ok"}]"#;
+        assert!(!contains_secret_token(json));
+
+        let with_key = r#"{"token":"ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw"}"#;
+        assert!(contains_secret_token(with_key));
     }
 }

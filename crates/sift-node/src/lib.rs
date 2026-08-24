@@ -63,8 +63,9 @@ pub struct CompressResult {
 }
 
 /// 压缩请求 body（自动检测 Anthropic /v1/messages、OpenAI Chat Completions、
-/// OpenAI Responses API 三种格式）。`query` 为当前用户 query（供相关性锚点
-/// 压缩器使用，可空）。
+/// OpenAI Responses API 三种格式）。默认只压缩工具输出，保护
+/// system/user/assistant prompt。`query` 为当前用户 query（供相关性锚点压缩器
+/// 使用，可空）。
 #[napi]
 pub fn sift_request(mut body: Value, query: Option<String>) -> Result<CompressResult> {
     use sift::formats::{detect_request_format, frozen_message_count};

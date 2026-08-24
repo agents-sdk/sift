@@ -863,6 +863,7 @@ impl LogCompressor {
 
         let (compressed_body, output_stats) = self.format_output(&selected, &log_lines);
         let mut compressed = compressed_body;
+        let mut compressed_line_count = selected.len();
         let ratio = compressed.len() as f64 / content.len().max(1) as f64;
 
         let mut cache_key = None;
@@ -871,16 +872,23 @@ impl LogCompressor {
                 stats.stash_skip_reason = Some("compression ratio too high");
             } else if let Some(store) = store {
                 let key = stash::compute_key(content);
-                store.put(&key, content);
-                let marker = format!(
-                    "\n[{} lines compressed to {}. Retrieve more: hash={}]",
-                    original_line_count,
-                    selected.len(),
-                    key
-                );
-                compressed.push_str(&marker);
-                cache_key = Some(key);
-                stats.stash_emitted = true;
+                if store.put(&key, content).is_ok() {
+                    let marker = format!(
+                        "\n[{} lines compressed to {}. Retrieve more: hash={}]",
+                        original_line_count,
+                        selected.len(),
+                        key
+                    );
+                    compressed.push_str(&marker);
+                    cache_key = Some(key);
+                    stats.stash_emitted = true;
+                } else {
+                    stats.stash_skip_reason = Some("store write failed");
+                    // 调用方明确提供了 store，却无法持久化原文：必须回退原样，
+                    // 不能返回一个无 marker、不可恢复的有损日志。
+                    compressed = content.to_string();
+                    compressed_line_count = original_line_count;
+                }
             } else {
                 stats.stash_skip_reason = Some("no store provided");
             }
@@ -888,13 +896,14 @@ impl LogCompressor {
             stats.stash_skip_reason = Some("stash disabled in config");
         }
 
+        let final_ratio = compressed.len() as f64 / content.len().max(1) as f64;
         let result = LogCompressionResult {
             compressed,
             original: content.to_string(),
             original_line_count,
-            compressed_line_count: selected.len(),
+            compressed_line_count,
             format_detected: format,
-            compression_ratio: ratio,
+            compression_ratio: final_ratio,
             cache_key,
             stats: output_stats,
         };
@@ -1362,6 +1371,22 @@ mod tests {
     use super::*;
     use crate::stash::{StashStore, InMemoryStashStore};
 
+    struct FailingStore;
+
+    impl StashStore for FailingStore {
+        fn put(&self, _key: &str, _value: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("injected write failure"))
+        }
+
+        fn get(&self, _key: &str) -> Option<String> {
+            None
+        }
+
+        fn len(&self) -> usize {
+            0
+        }
+    }
+
     fn cmp() -> LogCompressor {
         LogCompressor::new(LogCompressorConfig::default())
     }
@@ -1684,6 +1709,30 @@ mod tests {
         let (result, stats) = c.compress(&content, 1.0);
         assert!(result.cache_key.is_none());
         assert_eq!(stats.stash_skip_reason, Some("no store provided"));
+    }
+
+    #[test]
+    fn stash_write_failure_reverts_original() {
+        let c = LogCompressor::new(LogCompressorConfig {
+            max_total_lines: 5,
+            min_lines_for_stash: 5,
+            min_compression_ratio_for_stash: 0.95,
+            ..Default::default()
+        });
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!("INFO line {}\n", i));
+        }
+        content.push_str("ERROR boom\n");
+
+        let (result, stats) = c.compress_with_store(&content, 1.0, Some(&FailingStore));
+
+        assert_eq!(result.compressed, content);
+        assert_eq!(result.compressed_line_count, result.original_line_count);
+        assert_eq!(result.compression_ratio, 1.0);
+        assert!(result.cache_key.is_none());
+        assert!(!stats.stash_emitted);
+        assert_eq!(stats.stash_skip_reason, Some("store write failed"));
     }
 
     // ─── 输出格式 ───────────────────────────────────────────────────

@@ -10,12 +10,12 @@ sift — LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节�
 
 1. 只在消息内压缩，绝不跨消息丢弃内容
 2. 冻结前缀（cache_control 标记以下）字节不动
-3. 有损压缩必须经 stash 可恢复（`«stash:HASH»` 标记 + store 原文）
+3. 有损压缩必须经 stash 可恢复（`<<stash:HASH>>` 标记 + store 原文）
 
 ## 常用命令
 
 ```sh
-cargo test --workspace                 # Rust 测试（320 个，全部必须过）
+cargo test --workspace                 # Rust workspace 测试（全部必须过）
 cd npm/core && npm run build           # 本机 .node + tsc 编译 TS
 cd npm/core && npm run build:cross     # 交叉编译 6 平台 .node + 生成平台子包（需 zig）
 cd npm/core && npm test                # TS 冒烟测试（先构建再运行）

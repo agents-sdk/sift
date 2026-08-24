@@ -111,12 +111,17 @@ pub fn compress_live_zone(
                     stash_key,
                     tokens_saved,
                 } => {
-                    store.put(&stash_key, text);
-                    outcome.stash_stored += 1;
-                    outcome.tokens_saved += tokens_saved as i64;
-                    holder[text_field] = Value::String(new_text);
-                    outcome.blocks_compressed += 1;
-                    outcome.changed = true;
+                    // 先确认原文已持久化，再发布 marker。写入失败必须原样回退，
+                    // 否则会产生无法恢复的有损结果。
+                    if store.put(&stash_key, text).is_ok() {
+                        outcome.stash_stored += 1;
+                        outcome.tokens_saved += tokens_saved as i64;
+                        holder[text_field] = Value::String(new_text);
+                        outcome.blocks_compressed += 1;
+                        outcome.changed = true;
+                    } else {
+                        outcome.blocks_reverted += 1;
+                    }
                 }
                 BlockOutcome::Reverted => outcome.blocks_reverted += 1,
             }
@@ -216,6 +221,18 @@ pub(crate) fn process_block_text(
     protector: &TagProtector,
     tokenizer: &EstimatingCounter,
 ) -> BlockOutcome {
+    // marker 已代表一段先前压缩结果。整块跳过可保证重复调用幂等，避免
+    // `marker -> marker -> original` 的递归恢复链。
+    if crate::stash::contains_marker(text) {
+        return BlockOutcome::Unchanged;
+    }
+
+    // secret 保护必须位于具体压缩器之上，确保 JSON、日志、搜索、diff、代码
+    // 与纯文本走同一条安全规则。宁可少压，也不能把凭证只留在 stash 中。
+    if crate::secrets::contains_secret_token(text) {
+        return BlockOutcome::Unchanged;
+    }
+
     let original_tokens = tokenizer.count_text(text);
 
     // 阶段 0：保护自定义标签（无标签文本是透传）。
@@ -261,13 +278,19 @@ pub(crate) fn process_block_text(
     if content_type == crate::content::ContentType::PlainText {
         if let Some(compressed) = route_mixed_fallback(&current, ctx) {
             let key = crate::stash::compute_key(text);
-            let saved = original_tokens.saturating_sub(tokenizer.count_text(&compressed));
             let mut final_text = compressed;
             final_text.push_str(&marker_for(&key));
+            let final_tokens = tokenizer.count_text(&final_text);
+            if final_tokens >= original_tokens {
+                return match (reformatted, commit_lossless(&current)) {
+                    (true, Some(outcome)) => outcome,
+                    (..) => BlockOutcome::Reverted,
+                };
+            }
             return BlockOutcome::Lossy {
                 new_text: final_text,
                 stash_key: key,
-                tokens_saved: saved,
+                tokens_saved: original_tokens.saturating_sub(final_tokens),
             };
         }
     }
@@ -301,24 +324,23 @@ pub(crate) fn process_block_text(
         };
     }
 
-    // token 校验：压缩后 token 不减则回退，避免「越压越大」。
-    let after = tokenizer.count_text(&compressed);
-    if after >= original_tokens {
-        return match (reformatted, commit_lossless(&current)) {
-            (true, Some(outcome)) => outcome,
-            (..) => BlockOutcome::Reverted,
-        }
-    }
-
     // stash 存保护前的真正原文，保证 retrieve 拿回完整内容。
     let key = compressor.cache_key(text);
     let _ = store; // store 写入由调用方完成（见 Lossy 分支）
     let mut final_text = compressed;
     final_text.push_str(&marker_for(&key));
+    // 收益校验必须覆盖真正发送给模型的最终文本，包括 marker 开销。
+    let final_tokens = tokenizer.count_text(&final_text);
+    if final_tokens >= original_tokens {
+        return match (reformatted, commit_lossless(&current)) {
+            (true, Some(outcome)) => outcome,
+            (..) => BlockOutcome::Reverted,
+        };
+    }
     BlockOutcome::Lossy {
         new_text: final_text,
         stash_key: key,
-        tokens_saved: original_tokens.saturating_sub(after),
+        tokens_saved: original_tokens.saturating_sub(final_tokens),
     }
 }
 
@@ -327,6 +349,22 @@ mod tests {
     use super::*;
     use crate::stash::InMemoryStashStore;
     use serde_json::json;
+
+    struct FailingStore;
+
+    impl StashStore for FailingStore {
+        fn put(&self, _key: &str, _content: &str) -> std::io::Result<()> {
+            Err(std::io::Error::other("injected write failure"))
+        }
+
+        fn get(&self, _key: &str) -> Option<String> {
+            None
+        }
+
+        fn len(&self) -> usize {
+            0
+        }
+    }
 
     fn body() -> Value {
         json!({
@@ -523,12 +561,12 @@ mod tests {
     }
 
     #[test]
-    fn compresses_chat_completions_text_parts() {
-        // parts 数组 content：各 type:"text" part 独立压缩，image_url part 不动。
+    fn compresses_chat_completions_tool_text_parts() {
+        // tool 的 parts 数组 content：各 type:"text" part 独立压缩，image_url part 不动。
         let big = "line of log output\n".repeat(60);
         let mut b = json!({
             "messages": [
-                {"role": "user", "content": [
+                {"role": "tool", "tool_call_id": "c1", "content": [
                     {"type": "text", "text": "check this log"},
                     {"type": "text", "text": big},
                     {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
@@ -588,5 +626,121 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(!outcome.changed);
+    }
+
+    #[test]
+    fn chat_trailing_tool_output_is_compressed() {
+        let rows: Vec<Value> = (0..200)
+            .map(|i| json!({"id": i, "status": "ok"}))
+            .collect();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let mut b = json!({"model": "gpt-5", "messages": [
+            {"role": "user", "content": "fetch"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "fetch", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "content": raw},
+        ]});
+        let store = InMemoryStashStore::new();
+        let outcome = compress_live_zone(&mut b, Some(&store), None);
+        assert!(outcome.changed, "{outcome:?}");
+        assert!(b["messages"][2]["content"]
+            .as_str()
+            .unwrap()
+            .contains("<<stash:"));
+    }
+
+    #[test]
+    fn responses_trailing_function_output_is_compressed() {
+        let rows: Vec<Value> = (0..200)
+            .map(|i| json!({"id": i, "status": "ok"}))
+            .collect();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let mut b = json!({"model": "gpt-5", "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": "fetch"}]},
+            {"type": "function_call", "call_id": "c1", "name": "fetch", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": raw},
+        ]});
+        let store = InMemoryStashStore::new();
+        let outcome = compress_live_zone(&mut b, Some(&store), None);
+        assert!(outcome.changed, "{outcome:?}");
+        assert!(b["input"][2]["output"]
+            .as_str()
+            .unwrap()
+            .contains("<<stash:"));
+    }
+
+    #[test]
+    fn prompt_roles_remain_unchanged() {
+        let raw = serde_json::to_string(
+            &(0..200)
+                .map(|i| json!({"id": i, "status": "ok"}))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let mut b = json!({"messages": [
+            {"role": "system", "content": raw},
+            {"role": "assistant", "content": null, "tool_calls": []},
+            {"role": "user", "content": raw},
+        ]});
+        let original = b.clone();
+        let store = InMemoryStashStore::new();
+        let outcome = compress_live_zone(&mut b, Some(&store), None);
+        assert!(!outcome.changed);
+        assert_eq!(b, original);
+    }
+
+    #[test]
+    fn stash_write_failure_reverts_lossy_block() {
+        let rows: Vec<Value> = (0..200)
+            .map(|i| json!({"id": i, "status": "ok"}))
+            .collect();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let mut b = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": raw}
+            ]}
+        ]});
+        let original = b.clone();
+        let outcome = compress_live_zone(&mut b, Some(&FailingStore), None);
+        assert!(!outcome.changed);
+        assert_eq!(outcome.stash_stored, 0);
+        assert_eq!(outcome.blocks_reverted, 1);
+        assert_eq!(b, original);
+    }
+
+    #[test]
+    fn secret_in_tool_output_is_protected_before_routing() {
+        let secret = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";
+        let raw = format!(
+            "2026-08-24 ERROR credential={secret}\n{}",
+            "2026-08-24 INFO repeated build line\n".repeat(80)
+        );
+        let mut b = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": raw}
+            ]}
+        ]});
+        let original = b.clone();
+        let store = InMemoryStashStore::new();
+        let outcome = compress_live_zone(&mut b, Some(&store), None);
+        assert!(!outcome.changed);
+        assert_eq!(b, original);
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn anthropic_error_tool_result_is_protected() {
+        let raw = "neutral failure details\n".repeat(80);
+        let mut b = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": true, "content": raw}
+            ]}
+        ]});
+        let original = b.clone();
+        let store = InMemoryStashStore::new();
+        let outcome = compress_live_zone(&mut b, Some(&store), None);
+        assert!(!outcome.changed);
+        assert_eq!(b, original);
     }
 }

@@ -1,7 +1,7 @@
 # @agent-context/sift
 
 LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 LLM API **之前**，就地压缩
-消息里的大型工具输出，节省 token 与成本；被压缩的原文卸载进进程内 stash store，可随时
+消息里的大型工具输出，节省 token 与成本；被压缩的原文卸载进本地持久化 stash store，可随时
 按标记取回，保证端到端无损。
 
 - 纯 Rust 核心（`sift`）+ napi-rs 桥
@@ -66,14 +66,15 @@ const original = retrieve(key); // string | null
 
 ### `siftRequest(body, query?)`
 
-就地压缩 body 的 **live zone**（最后一条 user 消息及之前、冻结前缀之后的可变区）。
+就地压缩 body 中冻结前缀之外的**工具输出**。system/user/assistant prompt 默认保护；
+若调用方明确要压缩一段普通文本，应使用 `siftText`。
 格式自动检测（[`detectRequestFormat`](#detectrequestformatbody)）：
 
 | 格式 | 压缩候选 |
 |---|---|
-| Anthropic `/v1/messages` | `messages[*].content[*]` 的 text block `text` / tool_result `content` |
-| OpenAI Chat Completions | `messages[*].content` 字符串、parts 数组的 `text` part、`role:"tool"` 消息的 `content` |
-| OpenAI Responses API | `input[*]` 的 `input_text`/`output_text` part `text`、`function_call_output` 的 `output` |
+| Anthropic `/v1/messages` | 非冻结区内、且 `is_error != true` 的 tool_result `content` |
+| OpenAI Chat Completions | `role:"tool"` 消息的字符串 content 或 text parts |
+| OpenAI Responses API | `function_call_output` 的字符串 output 或 text parts |
 
 模型发出的结构化调用（`tool_calls`、`function_call`）不会被动。OpenAI 格式没有
 `cache_control` 前缀锚点，`frozenMessages` 恒为 0（live zone 从头开始）。
@@ -107,8 +108,8 @@ const original = retrieve(key); // string | null
 ### `detectRequestFormat(body)`
 
 返回 `'anthropic' | 'chat_completions' | 'responses' | 'unknown'`。
-无法判别时（如全部 content 为纯字符串）默认按 Anthropic 处理——无
-`cache_control` 时两种格式行为等价。
+无法判别时（如全部 content 为纯字符串）默认按 Anthropic 处理；这类请求没有明确工具
+输出候选，因此 `siftRequest` 会安全透传。需要压缩单条字符串时使用 `siftText`。
 
 ### `detectContentType(text)`
 
@@ -136,8 +137,9 @@ const original = retrieve(key); // string | null
 **不需要调用**的情况：
 
 - 消息都很小：单个文本块 < 512 字节会自动跳过（`MIN_BLOCK_BYTES`）。
-- 纯文本 / 源代码 / HTML：当前是 no-op（无可压的专用压缩器）。
-- 没有 stash store 的场景：`siftRequest` 依赖进程内 store 才能卸载原文（见下）。
+- HTML：当前没有专用压缩器；纯文本和源代码已有各自压缩器，但 `siftRequest` 仍只会
+  对工具输出候选启用它们，普通文本请显式调用 `siftText`。
+- stash 目录不可创建或原文无法落盘：有损结果会回退原文，不会留下不可恢复的压缩内容。
 
 ## 有损压缩与恢复（stash）
 
@@ -153,7 +155,8 @@ const original = retrieve(key); // string | null
 ```
 
 典型恢复流程：模型看到压缩内容后说「我需要看完整数据」，应用从最近的压缩消息里
-提取 `<<stash:KEY>>`，`retrieve` 取回原文，把原文补发给模型。
+提取 `<<stash:KEY>>`，`retrieve` 取回原文，把原文补发给模型。Sift 当前不会自动向模型
+注入 retrieve tool；需要模型自主取回时，调用方必须显式提供相应工具。
 
 提取 key 的辅助：
 
@@ -167,7 +170,7 @@ function extractStashKeys(body: any): string[] {
 
 ## 与 prompt cache 的关系（cache 安全）
 
-`siftRequest` 只改 **live zone**（冻结前缀之后、最后一条 user 消息为止的可变区）。
+`siftRequest` 只改冻结前缀之后的工具输出候选。
 `cache_control` 标记以下的**冻结前缀字节不动**，因此不会破坏 prompt cache 的命中。
 `result.frozenMessages` 报告了被保护的冻结条数。
 

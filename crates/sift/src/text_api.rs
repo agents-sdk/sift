@@ -71,7 +71,9 @@ pub fn compress_text(
             tokens_saved,
         } => {
             // 单字符串入口没有外层循环代写 store，由本函数自己卸载原文。
-            store.put(&stash_key, text);
+            if store.put(&stash_key, text).is_err() {
+                return passthrough();
+            }
             TextCompressResult {
                 text: new_text,
                 changed: true,
@@ -89,6 +91,7 @@ pub fn compress_text(
 mod tests {
     use super::*;
     use crate::stash::InMemoryStashStore;
+    use crate::tokenizer::Tokenizer;
     use serde_json::json;
 
     #[test]
@@ -121,6 +124,12 @@ mod tests {
         assert!(r.text.contains("<<stash:"));
         assert!(r.text.len() < raw.len());
         assert!(r.tokens_saved > 0);
+        let tokenizer = EstimatingCounter::new();
+        assert_eq!(
+            r.tokens_saved,
+            tokenizer.count_text(&raw) as i64 - tokenizer.count_text(&r.text) as i64,
+            "tokens_saved 必须包含最终 stash marker 的成本"
+        );
         // 原文可回取。
         let key = r.stash_key.as_ref().unwrap();
         assert_eq!(store.get(key).unwrap(), raw);
@@ -171,5 +180,22 @@ mod tests {
         // 无损结果仍可解析回等价 JSON。
         let parsed: serde_json::Value = serde_json::from_str(&r.text).unwrap();
         assert_eq!(parsed, serde_json::Value::Array(rows));
+    }
+
+    #[test]
+    fn already_compressed_text_is_idempotent() {
+        let rows: Vec<_> = (0..200)
+            .map(|i| json!({"id": i, "status": "ok"}))
+            .collect();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+        let first = compress_text(&raw, Some(&store), None);
+        assert!(first.lossy);
+        assert_eq!(first.text.matches("<<stash:").count(), 1);
+
+        let second = compress_text(&first.text, Some(&store), None);
+        assert!(!second.changed);
+        assert_eq!(second.text, first.text);
+        assert_eq!(second.text.matches("<<stash:").count(), 1);
     }
 }

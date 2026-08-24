@@ -1,8 +1,8 @@
 //! OpenAI Chat Completions 格式适配。
 //!
-//! live zone：无 cache_control 前缀锚点，floor = 0，ceiling = 最后一条
-//! `role:"user"` 消息。候选：
-//! - content 为字符串 → 消息本身的 `content` 字段（含 `role:"tool"` 的工具输出）；
+//! live zone：无 cache_control 前缀锚点，覆盖整个 messages 数组。候选只包括
+//! `role:"tool"` 的工具输出：
+//! - content 为字符串 → 消息本身的 `content` 字段；
 //! - content 为 parts 数组 → 各 `type:"text"` part 的 `text` 字段
 //!   （image_url 等其他 part 跳过）。
 //!
@@ -22,10 +22,10 @@ impl TextCandidates for ChatCompletionsFormat {
         if messages.is_empty() {
             return None;
         }
-        let ceiling = messages
-            .iter()
-            .rposition(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))?;
-        Some(LiveZone { floor: 0, ceiling })
+        Some(LiveZone {
+            floor: 0,
+            ceiling: messages.len() - 1,
+        })
     }
 
     fn messages_mut<'a>(&self, body: &'a mut Value) -> Option<&'a mut Vec<Value>> {
@@ -37,6 +37,9 @@ impl TextCandidates for ChatCompletionsFormat {
         msg: &'a mut Value,
         f: &mut dyn FnMut(&'a mut Value, &str),
     ) {
+        if msg.get("role").and_then(|r| r.as_str()) != Some("tool") {
+            return;
+        }
         let is_string = msg.get("content").is_some_and(|c| c.is_string());
         if is_string {
             f(msg, "content");
@@ -73,12 +76,26 @@ mod tests {
     }
 
     #[test]
-    fn no_user_message_means_no_zone() {
+    fn live_zone_includes_trailing_tool_output() {
+        let body = json!({"messages": [
+            {"role": "user", "content": "run"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "content": "output"},
+        ]});
+        let zone = ChatCompletionsFormat.live_zone(&body).unwrap();
+        assert_eq!((zone.floor, zone.ceiling), (0, 2));
+    }
+
+    #[test]
+    fn tool_only_history_still_has_a_zone() {
         let body = json!({"messages": [
             {"role": "system", "content": "sys"},
             {"role": "assistant", "content": "a1"},
         ]});
-        assert!(ChatCompletionsFormat.live_zone(&body).is_none());
+        let zone = ChatCompletionsFormat.live_zone(&body).unwrap();
+        assert_eq!((zone.floor, zone.ceiling), (0, 1));
     }
 
     #[test]
@@ -92,7 +109,7 @@ mod tests {
         assert_eq!(seen, vec![("content".to_string(), "tool output".to_string())]);
 
         // parts 数组：只取 type:"text" 的 part，image 跳过。
-        let mut msg = json!({"role": "user", "content": [
+        let mut msg = json!({"role": "tool", "tool_call_id": "c2", "content": [
             {"type": "text", "text": "look at this"},
             {"type": "image_url", "image_url": {"url": "data:..."}},
             {"type": "text", "text": "please"},
@@ -113,5 +130,15 @@ mod tests {
         let mut called = false;
         ChatCompletionsFormat.for_each_candidate(&mut msg, &mut |_, _| called = true);
         assert!(!called);
+    }
+
+    #[test]
+    fn prompt_roles_are_not_candidates() {
+        for role in ["system", "developer", "user", "assistant"] {
+            let mut msg = json!({"role": role, "content": "large prompt text"});
+            let mut called = false;
+            ChatCompletionsFormat.for_each_candidate(&mut msg, &mut |_, _| called = true);
+            assert!(!called, "role {role} must be protected");
+        }
     }
 }

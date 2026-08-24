@@ -49,6 +49,7 @@ const key = compressedContent.slice(
   compressedContent.length - 2,
 );
 assert.strictEqual(retrieve(key), bigJson);
+assert.strictEqual(retrieve('../outside-stash'), null, '非法 stash key 必须被拒绝');
 
 // 内容检测
 assert.strictEqual(detectContentType('[{"a":1}]'), 'json_array');
@@ -67,7 +68,6 @@ const chatBody = {
       ],
     },
     { role: 'tool', tool_call_id: 'c1', content: bigJson },
-    { role: 'user', content: 'summarize' },
   ],
 };
 assert.strictEqual(detectRequestFormat(chatBody), 'chat_completions');
@@ -89,7 +89,6 @@ const responsesBody = {
     { role: 'user', content: [{ type: 'input_text', text: 'fetch items' }] },
     { type: 'function_call', call_id: 'c1', name: 'fetch', arguments: '{}' },
     { type: 'function_call_output', call_id: 'c1', output: bigJson },
-    { role: 'user', content: [{ type: 'input_text', text: 'summarize' }] },
   ],
 };
 assert.strictEqual(detectRequestFormat(responsesBody), 'responses');
@@ -115,6 +114,24 @@ if (textResult.lossy) {
   assert.ok(textResult.changed, '大 JSON 应至少无损压缩');
   assert.ok(!textResult.text.includes('<<stash:'), '无损结果不应含标记');
 }
+
+// 已含 stash marker 的结果再次进入管线必须幂等，不能形成递归 marker 链。
+const repeatedTextResult = siftText(textResult.text);
+assert.strictEqual(repeatedTextResult.changed, false);
+assert.strictEqual(repeatedTextResult.text, textResult.text);
+
+// system/user/assistant prompt 默认保护；有损压缩只针对工具输出。
+const protectedPromptBody = {
+  model: 'gpt-5',
+  messages: [
+    { role: 'system', content: bigJson },
+    { role: 'assistant', content: null, tool_calls: [] },
+    { role: 'user', content: bigJson },
+  ],
+};
+const protectedPromptResult = siftRequest(protectedPromptBody);
+assert.strictEqual(protectedPromptResult.changed, false);
+assert.deepStrictEqual(protectedPromptResult.body, protectedPromptBody);
 // 小文本透传
 assert.strictEqual(siftText('tiny').changed, false);
 

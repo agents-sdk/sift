@@ -4,10 +4,10 @@ LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节�
 
 ## 特性
 
-- **多请求格式**（自动检测）：Anthropic `/v1/messages`、OpenAI Chat Completions、OpenAI Responses API；另有 `siftText` 直接压缩单条字符串（如工具输出原文）
+- **多请求格式**（自动检测）：Anthropic `/v1/messages`、OpenAI Chat Completions、OpenAI Responses API；`siftRequest` 默认只压缩工具输出并保护 system/user/assistant prompt，另有 `siftText` 显式压缩单条字符串
 - **按内容类型分发压缩器**：JSON 数组统计压缩、构建/测试日志、搜索结果、unified diff、纯文本抽取（BM25 + 近重复折叠，支持 CJK）、tree-sitter AST 代码压缩（8 语言）
 - **无损优先**：先尝试无损重排（JSON minify、日志模板化），缩小到 ≤80% 即短路，不引入任何信息损失
-- **有损可恢复**：有损压缩的原文写入 stash store（落盘持久化），输出留 `«stash:HASH»` 标记，可按 key 取回原文
+- **有损可恢复**：有损压缩的原文确认写入 stash store 后，输出才留下 `<<stash:HASH>>` 标记，可按 key 取回原文
 - **安全兜底**：冻结前缀（prompt cache 锚点）字节不动；tool_use/tool_result 配对保护；熵检测识别 API key / 凭证并强制保留；自定义 XML 标签占位保护
 
 ## 三大不变量
@@ -16,7 +16,7 @@ LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节�
 
 1. 只在消息内压缩，绝不跨消息丢弃内容
 2. 冻结前缀（`cache_control` 标记以下）字节不动
-3. 有损压缩必须经 stash 可恢复（`«stash:HASH»` 标记 + store 原文）
+3. 有损压缩必须经 stash 可恢复（`<<stash:HASH>>` 标记 + store 原文）
 
 ## 安装与使用
 

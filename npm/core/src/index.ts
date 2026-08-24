@@ -109,6 +109,7 @@ interface NativeModule {
 /**
  * 压缩请求 body（就地透传或压缩）。自动检测格式：
  * Anthropic /v1/messages、OpenAI Chat Completions、OpenAI Responses API。
+ * 默认只压缩工具输出；system/user/assistant prompt 保持不变。
  */
 export function siftRequest(body: object, query?: string): CompressResult {
   const r = native.siftRequest(body, query);

@@ -1,9 +1,7 @@
 //! OpenAI Responses API 格式适配。
 //!
-//! 请求体的 `input` 为数组（字符串形态是当前 query，不压缩）。live zone：
-//! floor = 0，ceiling = 最后一条 `role:"user"` 的 item。候选：
-//! - `{role, content: [...]}` item → 各 content part（`type` 为
-//!   `input_text` / `output_text` 等文本变体）的 `text` 字段；
+//! 请求体的 `input` 为数组（字符串形态是当前 query，不压缩）。live zone
+//! 覆盖整个 input 数组，默认候选只包括：
 //! - `{type: "function_call_output", call_id, output}` item → `output`
 //!   （字符串，或 content parts 数组里的文本 part）。
 
@@ -26,10 +24,10 @@ impl TextCandidates for ResponsesFormat {
         if items.is_empty() {
             return None;
         }
-        let ceiling = items
-            .iter()
-            .rposition(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))?;
-        Some(LiveZone { floor: 0, ceiling })
+        Some(LiveZone {
+            floor: 0,
+            ceiling: items.len() - 1,
+        })
     }
 
     fn messages_mut<'a>(&self, body: &'a mut Value) -> Option<&'a mut Vec<Value>> {
@@ -43,29 +41,21 @@ impl TextCandidates for ResponsesFormat {
     ) {
         // function_call_output：工具输出在 `output` 字段——字符串形态，
         // 或 content parts 数组（[{type:"input_text", text}, ...]）。
-        if msg.get("type").and_then(|t| t.as_str()) == Some("function_call_output") {
-            if msg.get("output").map(|o| o.is_string()).unwrap_or(false) {
-                f(msg, "output");
-                return;
-            }
-            if let Some(Value::Array(parts)) = msg.get_mut("output") {
-                for part in parts {
-                    if is_text_part(part.get("type").and_then(|t| t.as_str()).unwrap_or(""))
-                        && part.get("text").and_then(|t| t.as_str()).is_some()
-                    {
-                        f(part, "text");
-                    }
-                }
-            }
+        if msg.get("type").and_then(|t| t.as_str()) != Some("function_call_output") {
+            // user/developer/system/assistant 文本都属于 prompt 语义，默认保护。
             return;
         }
-        let Some(parts) = msg.get_mut("content").and_then(|c| c.as_array_mut()) else {
+        if msg.get("output").map(|o| o.is_string()).unwrap_or(false) {
+            f(msg, "output");
             return;
-        };
-        for part in parts {
-            let kind = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            if is_text_part(kind) && part.get("text").and_then(|t| t.as_str()).is_some() {
-                f(part, "text");
+        }
+        if let Some(Value::Array(parts)) = msg.get_mut("output") {
+            for part in parts {
+                if is_text_part(part.get("type").and_then(|t| t.as_str()).unwrap_or(""))
+                    && part.get("text").and_then(|t| t.as_str()).is_some()
+                {
+                    f(part, "text");
+                }
             }
         }
     }
@@ -89,6 +79,17 @@ mod tests {
     }
 
     #[test]
+    fn live_zone_includes_trailing_function_output() {
+        let body = json!({"input": [
+            {"role": "user", "content": [{"type": "input_text", "text": "run"}]},
+            {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "result"},
+        ]});
+        let zone = ResponsesFormat.live_zone(&body).unwrap();
+        assert_eq!((zone.floor, zone.ceiling), (0, 2));
+    }
+
+    #[test]
     fn string_input_means_no_zone() {
         // input 为纯字符串 = 当前 query，不压缩。
         let body = json!({"input": "just the current prompt"});
@@ -106,7 +107,7 @@ mod tests {
         ResponsesFormat.for_each_candidate(&mut item, &mut |h, field| {
             seen.push(h.get(field).unwrap().as_str().unwrap().to_string());
         });
-        assert_eq!(seen, vec!["hello".to_string(), "prior answer".to_string()]);
+        assert!(seen.is_empty());
 
         let mut item = json!({"type": "function_call_output", "call_id": "c1", "output": "tool out"});
         let mut seen = Vec::new();

@@ -99,9 +99,10 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 ```
 请求 body（serde_json::Value；Anthropic / OpenAI Chat Completions / OpenAI Responses）
   → formats::detect_request_format          （格式检测 + 策略分发）
-  → 各格式策略定位 live zone                （Anthropic floor = 冻结下界；OpenAI floor = 0；
-                                              ceiling = 最后一条 user 消息）
-  → 遍历 live zone 内的文本候选（格式适配层枚举），每候选：
+  → 各格式策略定位 live zone                （Anthropic：冻结下界至最后一条 user；
+                                              OpenAI：floor = 0，覆盖完整数组）
+  → 遍历 live zone 内的工具输出候选（Anthropic tool_result、Chat role=tool、
+    Responses function_call_output；system/user/assistant prompt 默认保护），每候选：
       0. tag_protector::protect             （自定义 XML 标签 → 占位符）
       1. 无损 reformat（reformat_for：JsonMinifier / LogTemplate）
          └ 缩到 ≤80% 体积即短路——不写 stash、无标记、可完全重建
@@ -116,8 +117,9 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
          混合内容路由（整块落 PlainText 时）：
            mixed_content::split_into_sections → 逐段独立分发压缩
            + recursive_json::replace_json_spans（段内嵌入 JSON span 平衡匹配替换）
-      3. tokenizer 校验（压缩后 token ≥ 原值则回退，保留无损结果）
-      4. tag_protector::restore + 原文写 stash store + 追加 <<stash:HASH>> 标记
+      3. tag_protector::restore + 追加 <<stash:HASH>> 标记
+      4. tokenizer 校验最终文本（含 marker；token ≥ 原值则回退）
+      5. 原文确认写入 stash store 后才发布有损结果；写入失败原样回退
          （text_crusher 段落选择含 secrets 熵保密：API key 段强制保留）
   → LiveZoneOutcome（changed / blocks / tokens_saved / stash_stored）
 ```
