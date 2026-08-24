@@ -234,10 +234,10 @@ impl SearchCompressor {
             } else {
                 let key = stash::compute_key(content);
                 let marker = format!(
-                    "\n[{} matches compressed to {}. Retrieve more: {}]",
+                    "\n[{} matches compressed to {}. Retrieve more: hash={}]",
                     original_count,
                     compressed_count,
-                    stash::marker_for(&key)
+                    key
                 );
                 compressed.push_str(&marker);
                 cache_key = Some(key);
@@ -1111,7 +1111,7 @@ src/main.py-44-context line";
     }
 
     #[test]
-    fn stash_marker_emitted_when_thresholds_clear() {
+    fn stash_reference_emitted_when_thresholds_clear() {
         let compressor = SearchCompressor::new(SearchCompressorConfig {
             max_matches_per_file: 2,
             max_total_matches: 4,
@@ -1127,9 +1127,11 @@ src/main.py-44-context line";
         assert!(result.cache_key.is_some());
         assert!(stats.stash_emitted);
         assert!(result.compressed.contains("[12 matches compressed to"));
+        // 折叠标记内只用纯哈希引用，不内嵌 `<<stash:KEY>>`（后者由框架在末尾追加一次）。
         assert!(result
             .compressed
-            .contains(&stash::marker_for(result.cache_key.as_ref().unwrap())));
+            .contains(&format!("hash={}", result.cache_key.as_ref().unwrap())));
+        assert!(!result.compressed.contains("<<stash:"));
     }
 
     #[test]

@@ -56,13 +56,13 @@ function bytes(n: number): string {
 
 // 压缩输出的差异高亮:
 //  - «/<<stash:HASH>>  恢复标记 → 金色
-//  - [N lines omitted: …] / [... N more …] / [N lines compressed …] → 灰色删除线感的折叠标记
-//  - [file changed, +a -b] 统计行 → 灰色
+//  - [N lines omitted: …] / [... N more …] / [N lines compressed …] → 灰色折叠标记
+//  - // ... N lines omitted（代码折叠注释，如 Java/JS/C++/Python）→ 灰色折叠标记
 function highlightCompressed(text: string) {
   const parts: Array<{ t: string; k: 'stash' | 'fold' | 'stat' | null }> = [];
-  // 顺序匹配:ccr 标记 | 括号折叠/统计行
+  // 顺序匹配:stash 标记 | 括号折叠行 | 代码折叠注释
   const re =
-    /(<<stash:[a-f0-9]+>>|«stash:[a-f0-9]+»)|(\[[^\]\n]{0,120}(?:omitted|compressed|more|changed|Retrieve)[^\]\n]{0,120}\])/g;
+    /(<<stash:[a-f0-9]+>>|«stash:[a-f0-9]+»)|(\[[^\]\n]{0,120}(?:omitted|compressed|more|changed|Retrieve)[^\]\n]{0,120}\])|((?:\/\/|#)\s*\.\.\.\s*\d+\s+lines?\s+omitted)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {

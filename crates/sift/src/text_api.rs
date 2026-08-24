@@ -127,6 +127,35 @@ mod tests {
     }
 
     #[test]
+    fn search_results_lossy_has_single_marker() {
+        // 回归：search_compressor 的折叠标记曾内嵌 `<<stash:KEY>>`，框架又在末尾
+        // 追加一次，导致输出出现两个标记。这里断言有损输出只有一个取回标记。
+        let files = [
+            "crates/sift/src/lib.rs",
+            "crates/sift/src/stash.rs",
+            "npm/core/src/index.ts",
+        ];
+        let mut raw = String::new();
+        for i in 1..=60 {
+            let f = files[i % 3];
+            raw.push_str(&format!("{f}:{}:siftText StashStore related handler {i}\n", i * 13));
+        }
+        let store = InMemoryStashStore::new();
+        let r = compress_text(&raw, Some(&store), Some("siftText StashStore"));
+        assert!(r.changed);
+        assert!(r.lossy);
+        assert_eq!(
+            r.text.matches("<<stash:").count(),
+            1,
+            "输出应只有一个 stash 标记: {}",
+            r.text
+        );
+        // 原文可回取。
+        let key = r.stash_key.as_ref().unwrap();
+        assert_eq!(store.get(key).unwrap(), raw);
+    }
+
+    #[test]
     fn pretty_json_lossless_without_marker() {
         let mut rows = Vec::new();
         for i in 0..50 {

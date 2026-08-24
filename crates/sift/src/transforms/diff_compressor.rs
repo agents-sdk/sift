@@ -323,10 +323,10 @@ impl DiffCompressor {
             let key = stash::compute_key(content);
             compressed_output.push('\n');
             compressed_output.push_str(&format!(
-                "[{} lines compressed to {}. Retrieve full diff: {}]",
+                "[{} lines compressed to {}. Retrieve full diff: hash={}]",
                 original_line_count,
                 compressed_line_count,
-                stash::marker_for(&key)
+                key
             ));
             cache_key = Some(key);
             stats.cache_key_emitted = true;
