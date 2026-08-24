@@ -292,35 +292,67 @@ impl CodeAwareCompressor {
         let lines: Vec<&str> = code.split('\n').collect();
         let root = tree.root_node();
 
-        // 收集结构骨架：imports / package / 类型 / 类整段保留；函数签名保留、
-        // 长体折叠。
+        // 收集结构骨架：imports / package / 类型整段保留；类只保留头
+        //（到 `{` 行），成员再深入——方法签名保留、长体折叠，字段等
+        // 短成员整段保留；顶层函数签名保留、长体折叠。
         let mut pieces: Vec<(usize, usize, bool /* is_function */)> = Vec::new();
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
+        let mut stack = vec![(root, false)];
+        while let Some((node, in_class)) = stack.pop() {
             let kind = node.kind();
             let start = node.start_position().row;
             let end = node.end_position().row;
 
-            if cfg.import_nodes.contains(&kind)
-                || cfg.class_nodes.contains(&kind)
-                || cfg.type_nodes.contains(&kind)
-                || cfg.package_node == Some(kind)
-            {
+            if cfg.package_node == Some(kind) || cfg.import_nodes.contains(&kind) {
                 pieces.push((start, end, false));
                 continue; // 不深入
-            } else if cfg.function_nodes.contains(&kind) {
+            }
+            if cfg.class_nodes.contains(&kind) {
+                // 类头：从声明首行到含 `{` 的行（含注解/类名/泛型/extends）
+                let header_end = node
+                    .child_by_field_name("body")
+                    .map(|body| body.start_position().row.saturating_sub(1))
+                    .unwrap_or(end)
+                    .max(start);
+                pieces.push((start, header_end, false));
+                // 类的收尾 `}` 行单独保留，维持语法合法
+                if end > header_end {
+                    pieces.push((end, end, false));
+                }
+                // 深入类体成员（方法可折叠，字段等保留）；
+                // 跳过 class_body 容器本身，只推其子节点
+                if let Some(body) = node.child_by_field_name("body") {
+                    let n = body.child_count();
+                    for i in (0..n).rev() {
+                        if let Some(child) = body.child(i) {
+                            stack.push((child, true));
+                        }
+                    }
+                }
+                continue;
+            }
+            if cfg.type_nodes.contains(&kind) {
+                pieces.push((start, end, false));
+                continue;
+            }
+            if cfg.function_nodes.contains(&kind) {
                 pieces.push((start, end, true));
+                continue;
+            }
+            if in_class {
+                // 类内非函数成员（字段 / 构造代码块等）：整段保留
+                pieces.push((start, end, false));
                 continue;
             }
             // 深入子节点（逆序 push 保持顺序）
             let n = node.child_count();
             for i in (0..n).rev() {
                 if let Some(child) = node.child(i) {
-                    stack.push(child);
+                    stack.push((child, false));
                 }
             }
         }
         pieces.sort();
+        pieces.dedup();
 
         let mut out = String::with_capacity(code.len() / 2);
         let mut bodies_folded = 0usize;
@@ -508,6 +540,25 @@ mod tests {
         let code = long_python();
         assert_eq!(c.cache_key(&code), c.cache_key(&code));
         assert!(c.estimate_bloat(&code) > 0.0);
+    }
+
+    #[test]
+    fn folds_long_java_method_bodies() {
+        let mut s = String::from(
+            "import java.util.List;\n\npublic class Service {\n    private final Repo repo;\n\n    public void big(int x) {\n",
+        );
+        for i in 0..25 {
+            s.push_str(&format!("        int v{i} = x * {i};\n"));
+        }
+        s.push_str("        return;\n    }\n}\n");
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let r = c.compress(&s);
+        assert!(!r.passthrough, "ratio={}", r.compression_ratio);
+        assert_eq!(r.language, CodeLanguage::Java);
+        assert!(r.compressed.contains("lines omitted"));
+        assert!(r.compressed.contains("public class Service"));
+        assert!(r.compressed.contains("public void big"));
+        assert!(r.compressed.contains("import java.util.List"));
     }
 
     #[test]
