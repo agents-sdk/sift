@@ -48,9 +48,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # zig：linux 交叉链接器（cargo-zigbuild）
+      # zig：linux 交叉链接器（cargo-zigbuild，装 PyPI 的 ziglang 发行版）
       - if: matrix.zig
-        run: npm i -g zig@0.15.2
+        run: pip3 install ziglang
       - name: Build .node
         working-directory: npm/core
         run: |
