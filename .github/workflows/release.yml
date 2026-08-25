@@ -3,7 +3,7 @@
 # 触发：推送 `v*` tag（如 `git tag v0.1.0 && git push --tags`）。
 # 流程：
 #   1. build 矩阵：6 个目标平台各编一个 .node，上传 artifact
-#      （macOS 原生跑；linux 用 napi build --cross-compile + zig）
+#      （macOS 原生跑；Linux GNU 用 napi-rs glibc 2.17 工具链，musl 用 zig）
 #   2. release：下载全部 artifact，生成平台子包（gen-platform-packages.mjs），
 #      依次 publish 6 个 @agent-context/sift-<platform> 子包，再 publish 根包。
 #
@@ -28,11 +28,13 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            napi_platform: linux-x64-gnu
             os: ubuntu-latest
-            zig: true
+            napi_cross: true
           - target: aarch64-unknown-linux-gnu
+            napi_platform: linux-arm64-gnu
             os: ubuntu-latest
-            zig: true
+            napi_cross: true
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             zig: true
@@ -58,8 +60,12 @@ jobs:
           npx napi build --platform --release \
             --manifest-path ../../crates/sift-node/Cargo.toml \
             --output-dir native \
-            ${{ matrix.zig && '--cross-compile' || '' }} \
+            ${{ matrix.zig && '--cross-compile' || matrix.napi_cross && '--use-napi-cross' || '' }} \
             --target ${{ matrix.target }}
+          if [ -n "${{ matrix.napi_platform }}" ]; then
+            ../../scripts/check-glibc-version.sh \
+              "native/sift.${{ matrix.napi_platform }}.node" 2.28
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: node-${{ matrix.target }}

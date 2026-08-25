@@ -68,7 +68,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 - 平台三元组由 `package.json` 的 `napi.targets` 声明（darwin/linux × arm64/x64 × gnu/musl）。
 - **跨平台编译**：`npm run build:cross`（=`scripts/build-cross.sh`）一次产出全部 6 个平台的 `.node`：
   - macOS 目标（arm64/x64）由 clang 原生交叉，无需额外工具；
-  - Linux 目标（x64/arm64 × gnu/musl）由 `napi build --cross-compile`（cargo-zigbuild + zig）交叉链接。
+  - Linux 目标（x64/arm64 × gnu/musl）由 `napi build --cross-compile`（cargo-zigbuild + zig）交叉链接；GNU 目标显式使用 `.2.28` glibc 基线，并在构建后扫描 ELF 符号版本。
   - 依赖：`rustup target add`（各交叉目标 rust-std）+ zig（脚本自动找 `~/zig` 或 PATH）。
 - **发布形态**：根包纯 TS（~6kB，只有 dist/）；二进制在 6 个平台子包
   `@agent-context/sift-<platform>`（`npm/core/platforms/`，由

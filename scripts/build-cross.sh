@@ -31,14 +31,31 @@ rustup target add \
   aarch64-unknown-linux-musl
 
 NAPI_ARGS="--platform --release --manifest-path ../../crates/sift-node/Cargo.toml --output-dir native"
+GLIBC_MIN_VERSION="2.28"
+
+build_linux_gnu() {
+  local rust_target="$1"
+  local napi_platform="$2"
+  local versioned_target="${rust_target}.${GLIBC_MIN_VERSION}"
+
+  # cargo-zigbuild 只有在 target 后显式附加版本时才会固定 glibc 基线。
+  # napi 会把版本也带进文件名，构建完成后改回公开的平台文件名。
+  npx napi build $NAPI_ARGS --cross-compile --target "$versioned_target"
+  mv "native/sift.${napi_platform}.${GLIBC_MIN_VERSION}.node" \
+    "native/sift.${napi_platform}.node"
+  ../../scripts/check-glibc-version.sh \
+    "native/sift.${napi_platform}.node" "$GLIBC_MIN_VERSION"
+}
 
 # macOS：本机 arm64 + 交叉 x64
 npx napi build $NAPI_ARGS --target aarch64-apple-darwin
 npx napi build $NAPI_ARGS --target x86_64-apple-darwin
 
-# Linux：cargo-zigbuild 交叉链接
-npx napi build $NAPI_ARGS --cross-compile --target x86_64-unknown-linux-gnu
-npx napi build $NAPI_ARGS --cross-compile --target aarch64-unknown-linux-gnu
+# Linux GNU：显式锁定 glibc 2.28，兼容 Oracle Linux 8.4。
+build_linux_gnu x86_64-unknown-linux-gnu linux-x64-gnu
+build_linux_gnu aarch64-unknown-linux-gnu linux-arm64-gnu
+
+# Linux musl：不依赖 glibc。
 npx napi build $NAPI_ARGS --cross-compile --target x86_64-unknown-linux-musl
 npx napi build $NAPI_ARGS --cross-compile --target aarch64-unknown-linux-musl
 
