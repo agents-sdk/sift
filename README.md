@@ -51,7 +51,7 @@ crates/
   sift/          # 压缩核心库（纯逻辑，无 napi 依赖）
   sift-node/     # napi-rs cdylib 桥
 npm/core/        # npm 包 @agent-context/sift（TypeScript）
-docs/PROJECT_MAP.md  # 工程地图：模块职责、压缩管线、发布链
+.agents/PROJECT_MAP.md  # 工程地图：模块职责、压缩管线、发布链
 tests/fixtures/      # 压缩输入/输出 golden 样本
 ```
 

@@ -8,7 +8,7 @@ LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 L
 - 支持三种请求格式（自动检测）：Anthropic `/v1/messages`、OpenAI Chat
   Completions、OpenAI Responses API
 - 另有 `siftText`：对单条字符串（如工具输出原文）直接压缩
-- 消息内压缩 + 冻结前缀保护 + stash 可恢复，三大不变量见 [PROJECT_MAP](../../docs/PROJECT_MAP.md)
+- 消息内压缩 + 冻结前缀保护 + stash 可恢复，三大不变量见 [PROJECT_MAP](../../.agents/PROJECT_MAP.md)
 
 ## 安装（本地构建）
 

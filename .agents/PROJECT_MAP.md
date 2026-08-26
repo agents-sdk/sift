@@ -49,7 +49,7 @@ npm/core/                 # npm 包 @agent-context/sift（TypeScript）
   dist/                   # tsc 产物（index.js + index.d.ts，gitignore）
   native/                 # Rust 构建产物（cp 自 target/release，gitignore）
   platforms/              # 平台子包 @agent-context/sift-<platform>（生成物，gitignore）
-docs/PROJECT_MAP.md       # 本文件
+.agents/PROJECT_MAP.md      # 本文件
 references/headroom/      # 初始版本参考的上游实现（只读，勿改）
 tests/fixtures/           # 压缩输入/输出 golden 样本
 .cargo/config.toml        # macOS 链接参数：napi cdylib 延迟解析 node 符号

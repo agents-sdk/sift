@@ -84,10 +84,10 @@ function searchResultsSample() {
     'crates/sift/src/stash.rs',
     'crates/sift/src/relevance.rs',
     'npm/core/src/index.ts',
-    'docs/PROJECT_MAP.md',
+    '.agents/PROJECT_MAP.md',
   ];
   const terms = ['siftText', 'StashStore', 'ReformatTransform', 'frozen', 'tokensSaved'];
-  const lines = ['$ rg -n "siftText|StashStore|frozen" crates/ npm/ docs/'];
+  const lines = ['$ rg -n "siftText|StashStore|frozen" crates/ npm/ .agents/'];
   for (let i = 0; i < 60; i++) {
     const f = files[i % files.length];
     const t = terms[(i / 7) % terms.length | 0];

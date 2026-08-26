@@ -1,6 +1,6 @@
 //! sift：LLM 上下文压缩核心库。
 //!
-//! 设计不变量（见 docs/PROJECT_MAP.md）：
+//! 设计不变量（见 .agents/PROJECT_MAP.md）：
 //! 1. 只在消息内压缩，绝不跨消息丢弃内容；
 //! 2. 冻结前缀（cache_control 标记以下）字节不动；
 //! 3. 有损压缩必须可通过 stash 卸载恢复端到端无损。
