@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 sift — LLM 上下文压缩工具（Rust）：压缩 LLM 对话上下文，节省 token 与缓存成本。
 
