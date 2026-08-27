@@ -18,11 +18,13 @@ LLM 上下文压缩核心的 Node 绑定（Rust 实现）。在请求发送给 L
 cd npm/core
 npm install
 npm run build        # 本机平台
-# 或 npm run build:cross   # 交叉编译全部 6 平台（需 zig）
+# 或 npm run build:cross   # 本机交叉编译 macOS/Linux 6 平台（需 zig）
 ```
 
 产物：`dist/`（TS 编译）+ `native/sift.<platform-triple>.node`。发布后即可
 `npm install @agent-context/sift`。
+
+发布包支持 macOS、Linux 与 Windows 的 x64/arm64；Linux 同时提供 GNU 与 musl 变体。
 
 ## 运行场景演示
 

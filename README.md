@@ -60,14 +60,14 @@ tests/fixtures/      # 压缩输入/输出 golden 样本
 ```sh
 cargo test --workspace                 # Rust 测试（全部必须过）
 cd npm/core && npm run build           # 本机 .node + tsc 编译 TS
-cd npm/core && npm run build:cross     # 交叉编译 6 平台 .node + 生成平台子包（需 zig）
+cd npm/core && npm run build:cross     # 本机交叉编译 macOS/Linux 6 平台（需 zig）
 cd npm/core && npm test                # TS 冒烟测试（先构建再运行）
 ```
 
 Linux GNU 预编译包以 glibc 2.28 为最高 ABI 基线，可运行于 Oracle Linux 8.4 及 glibc 更新的发行版。
 
 - CI（PR/push）：clippy + cargo test + npm 冒烟
-- 发布：推 `v*` tag 触发 release 流水线，编 6 平台二进制并 publish 平台子包 + 根包
+- 发布：推 `v*` tag 触发 release 流水线，编 macOS/Linux/Windows 8 平台二进制并 publish 平台子包 + 根包
 
 ## License
 

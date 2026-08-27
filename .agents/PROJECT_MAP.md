@@ -65,19 +65,19 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 ```
 
 - npm 包内 `npm run build`（本机 native + tsc）、`npm test`（构建 + 冒烟测试）一条命令完成。
-- 平台三元组由 `package.json` 的 `napi.targets` 声明（darwin/linux × arm64/x64 × gnu/musl）。
-- **跨平台编译**：`npm run build:cross`（=`scripts/build-cross.sh`）一次产出全部 6 个平台的 `.node`：
+- 平台三元组由 `package.json` 的 `napi.targets` 声明（macOS/Linux/Windows × arm64/x64，Linux 含 gnu/musl）。
+- **本机跨平台编译**：`npm run build:cross`（=`scripts/build-cross.sh`）一次产出 macOS/Linux 6 个平台的 `.node`：
   - macOS 目标（arm64/x64）由 clang 原生交叉，无需额外工具；
   - Linux 目标（x64/arm64 × gnu/musl）由 `napi build --cross-compile`（cargo-zigbuild + zig）交叉链接；GNU 目标显式使用 `.2.28` glibc 基线，并在构建后扫描 ELF 符号版本。
   - 依赖：`rustup target add`（各交叉目标 rust-std）+ zig（脚本自动找 `~/zig` 或 PATH）。
-- **发布形态**：根包纯 TS（~6kB，只有 dist/）；二进制在 6 个平台子包
+- **发布形态**：根包纯 TS（~6kB，只有 dist/）；二进制在 8 个平台子包
   `@agent-context/sift-<platform>`（`npm/core/platforms/`，由
   `scripts/gen-platform-packages.mjs` 生成，build:cross 自动执行）。
   根包 `optionalDependencies` 引用全部平台子包，`npm install` 时按当前平台自动命中，
   装错平台的被 optional 豁免。`dist/index.js` 加载顺序：平台子包 → 本地 `native/`（开发模式）。
 - **发布流水线**（`.github/workflows/release.yml`）：推 `v*` tag 触发——
   build 矩阵各平台编 `.node` 上传 artifact → publish job 生成子包、依次 publish
-  6 个平台包 + 根包（需 `NPM_TOKEN` secret）。CI（`ci.yml`）：PR/push 跑
+  8 个平台包 + 根包（含 Windows x64/arm64，需 `NPM_TOKEN` secret）。CI（`ci.yml`）：PR/push 跑
   clippy + cargo test + npm 冒烟。
 
 ## npm 包对外 API（@agent-context/sift）
@@ -136,7 +136,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 - [ ] HTTP 层的字节区间手术（RawValue 偏移 + cache SHA 不变），供真实代理使用
 - [ ] parity golden 测试（可参考 `references/headroom/tests/parity/` 的样本格式）
 - [x] napi-rs CLI 集成（`napi build --platform` + 按平台加载）
-- [x] 跨平台编译（`npm run build:cross` 产出 6 平台 `.node`：darwin/linux × arm64/x64 × gnu/musl）
+- [x] 跨平台编译与发布（本机产出 macOS/Linux 6 平台；release matrix 另产出 Windows x64/arm64，共 8 平台包）
 - [x] stash store 落盘持久化（`FileStashStore`，目录 `SIFT_STASH_DIR`/`~/.sift/stash`，重启不丢）
 - [x] 多平台发布流水线（平台子包 + GitHub Actions 矩阵，`v*` tag 触发 release）
 - [ ] 集群共享存储后端（Redis / 对象存储，`StashStore` trait 已抽象好，替换 `FileStashStore` 即可）

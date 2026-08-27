@@ -2,10 +2,10 @@
 #
 # 触发：推送 `v*` tag（如 `git tag v0.1.0 && git push --tags`）。
 # 流程：
-#   1. build 矩阵：6 个目标平台各编一个 .node，上传 artifact
-#      （macOS 原生跑；Linux GNU 用 napi-rs glibc 2.17 工具链，musl 用 zig）
+#   1. build 矩阵：8 个目标平台各编一个 .node，上传 artifact
+#      （macOS/Windows 原生跑；Linux GNU 用 napi-rs 交叉工具链，musl 用 zig）
 #   2. release：下载全部 artifact，生成平台子包（gen-platform-packages.mjs），
-#      依次 publish 6 个 @agent-context/sift-<platform> 子包，再 publish 根包。
+#      依次 publish 8 个 @agent-context/sift-<platform> 子包，再 publish 根包。
 #
 # 所需 secret：NPM_TOKEN（npm publish 权限，@agent-context scope）。
 name: release
@@ -41,6 +41,10 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             zig: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +58,7 @@ jobs:
       - if: matrix.zig
         run: pip3 install ziglang
       - name: Build .node
+        shell: bash
         working-directory: npm/core
         run: |
           npm install
@@ -97,7 +102,7 @@ jobs:
         working-directory: npm/core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # 先发 6 个平台子包，再发根包（根包 optionalDependencies 依赖它们）
+        # 先发 8 个平台子包，再发根包（根包 optionalDependencies 依赖它们）
         run: |
           for dir in platforms/*/; do
             (cd "$dir" && npm publish --access public)
