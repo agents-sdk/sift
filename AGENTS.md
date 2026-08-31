@@ -47,5 +47,5 @@ build 矩阵编各平台 → 生成 `@agent-context/sift-<platform>` 子包 → 
 - 新特性先写测试再写实现（golden 样本放 `tests/fixtures/`）
 - 注释与文档用中文，标识符用英文
 
-> 历史：初始版本的部分设计与实现参考了 Apache-2.0 项目 headroom
-> （见 `references/headroom/`，只读；归属见 `NOTICE`）。
+> 历史：初始版本参考过 Apache-2.0 项目 Headroom 的架构和算法思路，随后独立用 Rust
+> 重写；归属说明见 `NOTICE`。仓库不包含 Headroom 源码副本。

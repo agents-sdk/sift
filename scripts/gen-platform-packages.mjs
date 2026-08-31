@@ -4,8 +4,10 @@
  *
  * 输入：npm/core/native/sift.<triple>.node（由 build-cross.sh 产出）
  * 输出：npm/core/platforms/<triple>/
- *   ├── package.json   name=@agent-context/sift-<platform>, files=[*.node]
- *   └── sift.<triple>.node
+ *   ├── package.json   name=@agent-context/sift-<platform>, files=[*.node, LICENSE, NOTICE]
+ *   ├── sift.<triple>.node
+ *   ├── LICENSE
+ *   └── NOTICE
  *
  * 同时把根 package.json 的 optionalDependencies 更新为各平台子包，
  * npm install 时按当前平台自动装对应子包（装错平台的会被 optional 豁免）。
@@ -22,6 +24,8 @@ const pkgDir = path.join(root, 'npm', 'core');
 const nativeDir = path.join(pkgDir, 'native');
 const platformsDir = path.join(pkgDir, 'platforms');
 const pkgJsonPath = path.join(pkgDir, 'package.json');
+const licensePath = path.join(root, 'LICENSE');
+const noticePath = path.join(root, 'NOTICE');
 
 // rust target triple -> napi 平台名（与 index.ts 的 platformTriple() 一致）
 const TRIPLE_TO_PLATFORM = {
@@ -62,6 +66,8 @@ for (const file of nodes) {
   const dir = path.join(platformsDir, platform);
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(path.join(nativeDir, file), path.join(dir, file));
+  fs.copyFileSync(licensePath, path.join(dir, 'LICENSE'));
+  fs.copyFileSync(noticePath, path.join(dir, 'NOTICE'));
   const name = `@agent-context/sift-${platform}`;
   fs.writeFileSync(
     path.join(dir, 'package.json'),
@@ -72,7 +78,7 @@ for (const file of nodes) {
         os: [platform.split('-')[0]],
        cpu: [platform.split('-')[1]],
         main: 'index.js',
-        files: [file],
+        files: [file, 'LICENSE', 'NOTICE'],
         license,
         description: `@agent-context/sift 的 ${platform} 原生二进制`,
       },

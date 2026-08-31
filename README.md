@@ -86,5 +86,4 @@ Linux GNU 预编译包以 glibc 2.28 为最高 ABI 基线，可运行于 Oracle 
 
 ## License
 
-[Apache-2.0](LICENSE)。初始版本的部分设计与实现参考了 Apache-2.0 项目
-[headroom](https://github.com/chopratejas/headroom)，归属说明见 [NOTICE](NOTICE)。
+[Apache-2.0](LICENSE)。
