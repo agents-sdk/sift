@@ -16,7 +16,7 @@
     "build": "npm run build:native && npm run build:ts",
     "clean": "rm -rf dist dist-test dist-demo platforms",
     "demo": "npm run build:ts && tsc -p tsconfig.demo.json && node dist-demo/demo/index.js",
-    "test": "npm run build:ts && tsc -p tsconfig.test.json && node dist-test/smoke.test.js",
+    "test": "npm run build && tsc -p tsconfig.test.json && node dist-test/smoke.test.js",
     "prepublishOnly": "npm run build:cross && npm run build:ts"
   },
   "napi": {
