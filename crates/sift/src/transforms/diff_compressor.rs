@@ -22,9 +22,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::stash;
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
+use crate::stash;
+use crate::transforms::{CompressionContext, OffloadOutput, OffloadTransform, TransformError};
 
 // ─── 打分权重常量（与参考实现逐值一致）──────────────────────────────────
 
@@ -85,6 +85,8 @@ impl Default for DiffCompressorConfig {
 /// 压缩结果。
 #[derive(Debug, Clone)]
 pub struct DiffCompressionResult {
+    /// 解析时记录的输入行坐标，供 stash 文件模式按原文顺序回放。
+    pub retained_lines: Vec<usize>,
     pub compressed: String,
     pub original_line_count: usize,
     pub compressed_line_count: usize,
@@ -267,7 +269,9 @@ impl DiffCompressor {
             let (selected, dropped) = select_hunks(file.hunks, self.config.max_hunks_per_file);
             let dropped_count = dropped.len();
             if dropped_count > 0 {
-                stats.hunks_dropped_per_file.insert(file_label, dropped_count);
+                stats
+                    .hunks_dropped_per_file
+                    .insert(file_label, dropped_count);
                 let max_dropped = dropped.iter().map(|h| h.lines.len()).max().unwrap_or(0);
                 if max_dropped > largest_dropped {
                     largest_dropped = max_dropped;
@@ -302,6 +306,15 @@ impl DiffCompressor {
 
         let files_affected = compressed_files.len();
 
+        let mut retained_lines: Vec<usize> = (0..pre_diff_lines.len()).collect();
+        for file in &compressed_files {
+            retained_lines.extend(&file.input_header_lines);
+            for hunk in &file.hunks {
+                retained_lines.push(hunk.input_header);
+                retained_lines.extend(&hunk.input_lines);
+            }
+        }
+
         let mut compressed_output = format_output(
             &pre_diff_lines,
             &compressed_files,
@@ -324,9 +337,7 @@ impl DiffCompressor {
             compressed_output.push('\n');
             compressed_output.push_str(&format!(
                 "[{} lines compressed to {}. Retrieve full diff: hash={}]",
-                original_line_count,
-                compressed_line_count,
-                key
+                original_line_count, compressed_line_count, key
             ));
             cache_key = Some(key);
             stats.cache_key_emitted = true;
@@ -352,6 +363,7 @@ impl DiffCompressor {
         };
 
         let result = DiffCompressionResult {
+            retained_lines,
             compressed: compressed_output,
             original_line_count,
             compressed_line_count,
@@ -371,6 +383,8 @@ impl DiffCompressor {
 
 #[derive(Debug, Clone)]
 struct DiffHunk {
+    input_header: usize,
+    input_lines: Vec<usize>,
     header: String,
     lines: Vec<String>,
     additions: usize,
@@ -382,6 +396,7 @@ struct DiffHunk {
 
 #[derive(Debug, Clone)]
 struct DiffFile {
+    input_header_lines: Vec<usize>,
     header: String,
     old_file: String,
     new_file: String,
@@ -526,7 +541,7 @@ fn parse_diff(lines: &[&str]) -> ParsedDiff {
     let mut current_hunk: Option<DiffHunk> = None;
     let mut pre_diff_lines: Vec<String> = Vec::new();
 
-    for &line in lines {
+    for (input_line, &line) in lines.iter().enumerate() {
         if is_diff_header(line) {
             if let Some(h) = current_hunk.take() {
                 if let Some(f) = current_file.as_mut() {
@@ -537,6 +552,7 @@ fn parse_diff(lines: &[&str]) -> ParsedDiff {
                 files.push(f);
             }
             current_file = Some(DiffFile {
+                input_header_lines: vec![input_line],
                 header: line.to_string(),
                 old_file: String::new(),
                 new_file: String::new(),
@@ -560,6 +576,9 @@ fn parse_diff(lines: &[&str]) -> ParsedDiff {
         }
 
         if let Some(f) = current_file.as_mut() {
+            if current_hunk.is_none() && !is_hunk_header(line) {
+                f.input_header_lines.push(input_line);
+            }
             if line.starts_with("new file mode") {
                 f.is_new_file = true;
                 f.original_new_file_mode_line = Some(line.to_string());
@@ -603,6 +622,8 @@ fn parse_diff(lines: &[&str]) -> ParsedDiff {
                 }
             }
             current_hunk = Some(DiffHunk {
+                input_header: input_line,
+                input_lines: Vec::new(),
                 header: line.to_string(),
                 lines: Vec::new(),
                 additions: 0,
@@ -615,6 +636,7 @@ fn parse_diff(lines: &[&str]) -> ParsedDiff {
 
         // hunk 内容行。
         if let Some(h) = current_hunk.as_mut() {
+            h.input_lines.push(input_line);
             if line.starts_with('+') && !line.starts_with("+++") {
                 h.additions += 1;
                 h.lines.push(line.to_string());
@@ -661,7 +683,16 @@ const PRIORITY_WORD_GROUPS: &[&[&str]] = &[
         "crash",
         "panic",
     ],
-    &["important", "note", "todo", "fixme", "hack", "xxx", "bug", "fix"],
+    &[
+        "important",
+        "note",
+        "todo",
+        "fixme",
+        "hack",
+        "xxx",
+        "bug",
+        "fix",
+    ],
     &["security", "auth", "password", "secret", "token"],
 ];
 
@@ -838,6 +869,8 @@ fn reduce_context(hunk: &DiffHunk, max_context: usize) -> DiffHunk {
         let take = max_context.min(hunk.lines.len());
         let lines: Vec<String> = hunk.lines.iter().take(take).cloned().collect();
         return DiffHunk {
+            input_header: hunk.input_header,
+            input_lines: hunk.input_lines.iter().take(take).copied().collect(),
             header: hunk.header.clone(),
             lines,
             additions: 0,
@@ -886,6 +919,8 @@ fn reduce_context(hunk: &DiffHunk, max_context: usize) -> DiffHunk {
     }
 
     DiffHunk {
+        input_header: hunk.input_header,
+        input_lines: keep.iter().map(|&i| hunk.input_lines[i]).collect(),
         header: hunk.header.clone(),
         lines: new_lines,
         additions,
@@ -964,6 +999,7 @@ fn format_output(
 
 fn pass_through_result(content: &str, line_count: usize) -> DiffCompressionResult {
     DiffCompressionResult {
+        retained_lines: (0..line_count).collect(),
         compressed: content.to_string(),
         original_line_count: line_count,
         compressed_line_count: line_count,
@@ -1040,10 +1076,20 @@ impl OffloadTransform for DiffCompressorTransform {
         &self,
         input: &str,
         ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
+    ) -> Result<OffloadOutput, TransformError> {
         let context = ctx.query.as_deref().unwrap_or("");
         let result = self.compressor.compress(input, context);
-        Ok((result.compressed, input.to_string()))
+        if let Some(path) =
+            super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref())
+        {
+            return Ok(super::line_omissions::render(
+                input,
+                result.retained_lines,
+                path,
+                ctx.stash_line_offset,
+            ));
+        }
+        Ok(OffloadOutput::new(result.compressed, input.to_string()))
     }
 }
 
@@ -1113,7 +1159,10 @@ mod tests {
         let (r, stats) = c.compress_with_stats(&input, "");
         assert_eq!(r.compressed, input);
         assert_eq!(r.files_affected, 0);
-        assert_eq!(stats.stash_skipped_reason.as_deref(), Some("no diff sections parsed"));
+        assert_eq!(
+            stats.stash_skipped_reason.as_deref(),
+            Some("no diff sections parsed")
+        );
     }
 
     #[test]
@@ -1220,7 +1269,10 @@ mod tests {
         assert_eq!(stats.files_kept, 20);
         assert_eq!(stats.files_dropped.len(), 5);
         for label in &stats.files_dropped {
-            assert!(label.contains("-> "), "标签 `{label}` 应为 `old -> new` 形态");
+            assert!(
+                label.contains("-> "),
+                "标签 `{label}` 应为 `old -> new` 形态"
+            );
         }
     }
 
@@ -1338,7 +1390,11 @@ mod tests {
             ..Default::default()
         };
         let r = DiffCompressor::new(cfg).compress(input, "");
-        assert!(r.compressed.contains("similarity index 92%"), "{}", r.compressed);
+        assert!(
+            r.compressed.contains("similarity index 92%"),
+            "{}",
+            r.compressed
+        );
         assert!(r.compressed.contains("rename from old.py"));
         assert!(r.compressed.contains("rename to new.py"));
     }
@@ -1547,16 +1603,21 @@ mod tests {
         let ctx = CompressionContext {
             query: Some("added".into()),
             token_budget: None,
+            source_path: None,
+            stash_file_path: None,
+            stash_line_offset: 0,
         };
-        let (compressed, original) = t.apply(&input, &ctx).unwrap();
-        assert_eq!(original, input); // 原文完整返回供卸载
-        assert!(compressed.len() < input.len());
-        assert!(compressed.contains("[8 files changed, +40 -24 lines]"));
+        let result = t.apply(&input, &ctx).unwrap();
+        assert_eq!(result.original, input); // 原文完整返回供卸载
+        assert!(result.compressed.len() < input.len());
+        assert!(result
+            .compressed
+            .contains("[8 files changed, +40 -24 lines]"));
 
         // 短输入原样返回。
         let short = "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b";
-        let (c2, o2) = t.apply(short, &CompressionContext::default()).unwrap();
-        assert_eq!(c2, short);
-        assert_eq!(o2, short);
+        let result = t.apply(short, &CompressionContext::default()).unwrap();
+        assert_eq!(result.compressed, short);
+        assert_eq!(result.original, short);
     }
 }

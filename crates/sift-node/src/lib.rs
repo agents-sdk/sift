@@ -13,16 +13,17 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use sift::stash::{StashStore, FileStashStore};
+use sift::stash::{FileStashStore, StashStore};
+
+const MAX_RETRIEVE_LINES: u32 = 1_000;
 
 /// 全局 stash 落盘 store（跨 JS 调用、跨进程重启持久）。
 fn store() -> &'static FileStashStore {
     static STORE: OnceLock<FileStashStore> = OnceLock::new();
     STORE.get_or_init(|| {
         let dir = stash_dir();
-        FileStashStore::new(&dir).unwrap_or_else(|e| {
-            panic!("无法初始化 stash 落盘存储 {}: {e}", dir.display())
-        })
+        FileStashStore::new(&dir)
+            .unwrap_or_else(|e| panic!("无法初始化 stash 落盘存储 {}: {e}", dir.display()))
     })
 }
 
@@ -70,11 +71,17 @@ impl SiftInstance {
 
     /// 使用该实例的 stash store 压缩裸文本。
     #[napi]
-    pub fn sift_text(&self, text: String, query: Option<String>) -> Result<TextCompressResult> {
+    pub fn sift_text(
+        &self,
+        text: String,
+        query: Option<String>,
+        source_path: Option<String>,
+    ) -> Result<TextCompressResult> {
         Ok(compress_text_with_store(
             &text,
             &self.store,
             query.as_deref(),
+            source_path.as_deref(),
         ))
     }
 
@@ -82,6 +89,17 @@ impl SiftInstance {
     #[napi]
     pub fn retrieve(&self, key: String) -> Option<String> {
         self.store.get(&key)
+    }
+
+    /// 从该实例的 stash store 按原文行号读取一个连续分片。
+    #[napi]
+    pub fn retrieve_lines(
+        &self,
+        key: String,
+        start_line: u32,
+        line_count: u32,
+    ) -> Result<Option<StashSliceResult>> {
+        retrieve_lines_with_store(&self.store, &key, start_line, line_count)
     }
 }
 
@@ -143,6 +161,51 @@ pub fn retrieve(key: String) -> Option<String> {
     store().get(&key)
 }
 
+/// stash 原文的按行读取结果。行号从 1 开始，文本保留原始换行。
+#[napi(object)]
+pub struct StashSliceResult {
+    pub text: String,
+    pub start_line: u32,
+    pub line_count: u32,
+    pub total_lines: u32,
+    pub has_more: bool,
+}
+
+/// 按 stash 原文的 1-based 行号读取连续分片，单次最多 1000 行。
+#[napi]
+pub fn retrieve_lines(
+    key: String,
+    start_line: u32,
+    line_count: u32,
+) -> Result<Option<StashSliceResult>> {
+    retrieve_lines_with_store(store(), &key, start_line, line_count)
+}
+
+fn retrieve_lines_with_store(
+    store: &dyn StashStore,
+    key: &str,
+    start_line: u32,
+    line_count: u32,
+) -> Result<Option<StashSliceResult>> {
+    if start_line == 0 {
+        return Err(Error::from_reason("retrieveLines: startLine 必须从 1 开始"));
+    }
+    if line_count == 0 || line_count > MAX_RETRIEVE_LINES {
+        return Err(Error::from_reason(format!(
+            "retrieveLines: lineCount 必须在 1..={MAX_RETRIEVE_LINES} 之间"
+        )));
+    }
+    Ok(store
+        .get_lines(key, start_line as usize, line_count as usize)
+        .map(|slice| StashSliceResult {
+            text: slice.text,
+            start_line: slice.start_line as u32,
+            line_count: slice.line_count as u32,
+            total_lines: slice.total_lines as u32,
+            has_more: slice.has_more,
+        }))
+}
+
 /// 裸文本压缩结果（[`sift_text`] 的返回值）。
 #[napi(object)]
 pub struct TextCompressResult {
@@ -161,16 +224,26 @@ pub struct TextCompressResult {
 /// 压缩单个字符串（如把工具输出原文送进任意 API 之前）。
 /// `query` 为当前用户 query（供相关性锚点压缩器使用，可空）。
 #[napi]
-pub fn sift_text(text: String, query: Option<String>) -> Result<TextCompressResult> {
-    Ok(compress_text_with_store(&text, store(), query.as_deref()))
+pub fn sift_text(
+    text: String,
+    query: Option<String>,
+    source_path: Option<String>,
+) -> Result<TextCompressResult> {
+    Ok(compress_text_with_store(
+        &text,
+        store(),
+        query.as_deref(),
+        source_path.as_deref(),
+    ))
 }
 
 fn compress_text_with_store(
     text: &str,
     store: &dyn StashStore,
     query: Option<&str>,
+    source_path: Option<&str>,
 ) -> TextCompressResult {
-    let r = sift::text_api::compress_text(text, Some(store), query);
+    let r = sift::text_api::compress_text_with_source_path(text, Some(store), query, source_path);
     TextCompressResult {
         text: r.text,
         changed: r.changed,
@@ -236,7 +309,7 @@ mod tests {
     #[test]
     fn compress_text_roundtrip_via_store() {
         let big = format!("log line {} with payload\n", 1).repeat(80);
-        let r = sift_text(big.clone(), None).unwrap();
+        let r = sift_text(big.clone(), None, None).unwrap();
         if r.lossy {
             let key = r.stash_key.clone().unwrap();
             assert_eq!(retrieve(key).unwrap(), big);
@@ -254,7 +327,30 @@ mod tests {
             std::thread::current().id()
         ));
         let instance = SiftInstance::new(dir.to_string_lossy().into_owned()).unwrap();
-        assert_eq!(instance.store.dir(), dir.as_path());
+        assert_eq!(instance.store.dir(), std::fs::canonicalize(&dir).unwrap());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn instance_retrieves_bounded_line_slice() {
+        let dir = std::env::temp_dir().join(format!(
+            "sift-node-lines-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let instance = SiftInstance::new(dir.to_string_lossy().into_owned()).unwrap();
+        let content = "one\ntwo\nthree\nfour";
+        let key = sift::stash::compute_key(content);
+        instance.store.put(&key, content).unwrap();
+
+        let slice = instance.retrieve_lines(key, 2, 2).unwrap().unwrap();
+        assert_eq!(slice.text, "two\nthree\n");
+        assert_eq!(slice.total_lines, 4);
+        assert!(slice.has_more);
+        assert!(instance
+            .retrieve_lines("0".repeat(24), 1, MAX_RETRIEVE_LINES + 1)
+            .is_err());
+
         std::fs::remove_dir_all(dir).ok();
     }
 }

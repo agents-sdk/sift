@@ -3,13 +3,17 @@
 import type { APIRoute } from 'astro';
 import { siftText, detectContentType } from '@agent-context/sift';
 
+const SOURCE_EXTENSIONS = /\.(?:py|pyi|js|jsx|mjs|cjs|ts|tsx|mts|cts|go|rs|java|c|cc|cpp|cxx|hpp|hh|hxx)$/i;
+
 export const POST: APIRoute = async ({ request }) => {
   let text: string;
   let query: string;
+  let sourcePath: string | undefined;
   try {
     const body = await request.json();
     text = typeof body?.text === 'string' ? body.text : '';
     query = typeof body?.query === 'string' ? body.query : '';
+    sourcePath = typeof body?.sourcePath === 'string' ? body.sourcePath : undefined;
   } catch {
     return Response.json({ error: '请求体必须是 JSON' }, { status: 400 });
   }
@@ -20,8 +24,10 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: 'text 过长(上限 200,000 字符)' }, { status: 413 });
   }
   try {
-    const detected = detectContentType(text);
-    const r = siftText(text, query);
+    const detected = sourcePath && SOURCE_EXTENSIONS.test(sourcePath)
+      ? 'source_code'
+      : detectContentType(text);
+    const r = siftText(text, query, sourcePath);
     return Response.json({
       detected,
       changed: r.changed,

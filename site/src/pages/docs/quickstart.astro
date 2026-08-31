@@ -13,22 +13,25 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <CodeBlock code={`npm install @agent-context/sift`} lang="bash" command />
 
     <h2>最小示例</h2>
-    <CodeBlock code={`import { createSift, siftRequest, siftText, retrieve } from "@agent-context/sift";
+    <CodeBlock code={`import { createSift, siftRequest, siftText, retrieve, retrieveLines } from "@agent-context/sift";
 
 // 1. 压缩请求体:自动检测 Anthropic /v1/messages、
 //    OpenAI Chat Completions、OpenAI Responses 三种格式
 const { body, changed, tokensSaved } = siftRequest(requestBody, "用户当前的问题");
 
-// 2. 或直接压缩单条字符串(如工具输出原文)
-const r = siftText(toolOutput, "error mismatched");
+// 2. 或压缩源码;折叠点直接指向落盘 stash 文件
+const r = siftText(fileContent, "error mismatched");
+// // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
 
 if (r.lossy) {
   // 有损:原文已入 stash store,输出尾部带 «stash:HASH» 标记
   const original = retrieve(r.stashKey!);
+  // 若输出提示给出省略行范围,也可以只取回所需分片
+  const fragment = retrieveLines(r.stashKey!, 120, 80);
 }`} lang="ts" />
 
     <h2>指定 stash 目录</h2>
-    <p>直接导入的 <code>siftRequest</code>、<code>siftText</code> 和 <code>retrieve</code> 使用共享的默认 store:优先读取 <code>SIFT_STASH_DIR</code>,其次是 <code>~/.sift/stash</code>,最后才回退到系统临时目录。如果应用需要隔离租户、任务或测试数据,用 <code>createSift</code> 创建绑定到指定目录的实例:</p>
+    <p>直接导入的 <code>siftRequest</code>、<code>siftText</code>、<code>retrieve</code> 和 <code>retrieveLines</code> 使用共享的默认 store:优先读取 <code>SIFT_STASH_DIR</code>,其次是 <code>~/.sift/stash</code>,最后才回退到系统临时目录。如果应用需要隔离租户、任务或测试数据,用 <code>createSift</code> 创建绑定到指定目录的实例:</p>
     <CodeBlock code={`import { createSift } from "@agent-context/sift";
 
 const sift = createSift({
@@ -52,7 +55,7 @@ const original = result.stashKey
   messages.push({ role: "tool", content: r.text });
   if (r.lossy) keepForRecovery(r.stashKey);
 }`} lang="ts" />
-    <p>要点:每步都传 <code>query</code>(当前意图),压缩器会保留与任务相关的行(错误、匹配项、改动),丢弃重复样板。</p>
+    <p>要点:<code>query</code>(当前意图)帮助相关性筛选的压缩器保留关键行;纯文本默认只折叠完整重复块,不会按 query 删除独有内容。</p>
 
     <h3>长对话的历史消息</h3>
     <p>对话越长,每轮的输入成本越高。在发送请求前对整个 body 跑一遍 <code>compress</code>,早期消息里的日志、JSON、diff 会被压缩,而最近的轮次与冻结前缀保持原样。</p>
@@ -67,12 +70,12 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
       <li><strong>监控 / 导出的 JSON 数组</strong>:schema 去重 + 采样,异常行优先保留;</li>
       <li><strong>构建 / 测试日志</strong>:错误与堆栈全保留,重复 warning 折叠成一条;</li>
       <li><strong>git diff</strong>:hunk 采样,改动行保留;</li>
-      <li><strong>会议纪要等长文本</strong>:BM25 抽取关键句,支持中文。</li>
+      <li><strong>会议纪要等长文本</strong>:完整段落/发言块保守去重,只折叠同章节完全相同的块;独有内容保留,没有明确重复则原样返回。</li>
     </ul>
 
     <h2>API 一览</h2>
     <h3><code>createSift(&#123; stashDir &#125;)</code></h3>
-    <p>创建绑定到独立 stash 目录的 API 实例。实例提供 <code>siftRequest</code>、<code>siftText</code>、<code>retrieve</code>、<code>detectContentType</code> 和 <code>detectRequestFormat</code>;不影响直接导入的顶层 API 及其默认目录逻辑。</p>
+    <p>创建绑定到独立 stash 目录的 API 实例。实例提供 <code>siftRequest</code>、<code>siftText</code>、<code>retrieve</code>、<code>retrieveLines</code>、<code>detectContentType</code> 和 <code>detectRequestFormat</code>;不影响直接导入的顶层 API 及其默认目录逻辑。</p>
 
     <h3><code>siftRequest(body, query?)</code></h3>
     <p>压缩请求 body(就地透传或压缩),返回:</p>
@@ -86,19 +89,24 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
       <tr><td><code>tokensSaved</code></td><td>估算节省的 token 数</td></tr>
     </table>
 
-    <h3><code>siftText(text, query?)</code></h3>
-    <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / stashKey / tokensSaved</code>。内容类型自动检测分发,单 block 最小 512 字节才参与压缩。</p>
+    <h3><code>siftText(text, query?, sourcePath?)</code></h3>
+    <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / stashKey / tokensSaved</code>。使用落盘 stash 时,源码、搜索结果、日志、Git Diff 和整行纯文本的省略位置会就地输出 <code>[... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32]</code>,代码使用注释形式。文件是完整原文,起始行从 1 计数,不是搜索命中源码或 diff 目标文件的行号;Coding Agent 可直接通过文件读取工具读取对应行数。可验证的混合内容整行分段也会换算为完整 stash 的坐标。可选的 <code>sourcePath</code> 仅用于按扩展名选择 8 种源码 grammar。单 block 最小 512 字节才参与压缩。</p>
+    <p>无损 minify 不产生 stash 或省略提示。JSON 结构采样、行内片段、标签保护造成映射变化、非本地 store 等情况暂不输出文件行提示。短空隙若比提示更短则原样保留;纯文本按完整块去重,不将句子数当行数。不按 query 或目标比例删除独有内容,不同编号、数字、状态或发言人的块不因相似而合并。</p>
+    <p>日志首个非空行、可识别的命令回显(如 <code>$ cargo build</code>、shell tracing、npm script、PowerShell 提示符)及显式续行强制保留,不会被普通日志行数预算截掉或隐藏在模板中。能从 stash 恢复不等于允许省略执行命令。</p>
 
     <h3><code>retrieve(key)</code></h3>
     <p>按 <code>stashKey</code> 从 stash store 取回有损压缩的原文,端到端无损。</p>
+
+    <h3><code>retrieveLines(key, startLine, lineCount)</code></h3>
+    <p>按 stash 原文的 1-based 行号读取连续分片,单次最多 1000 行;返回 <code>text / startLine / lineCount / totalLines / hasMore</code>。这是非本地 stash 或文件工具不可用时的备选;代码内联提示本身不要求调用这个 API。</p>
 
     <h3><code>detectContentType(text)</code> / <code>detectRequestFormat(body)</code></h3>
     <p>类型探测:返回内容类型(JSON 数组 / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
 
     <h2>最佳实践</h2>
     <ul>
-      <li><strong>总是传 query</strong>:用户当前的问题、Agent 当前步骤的意图。相关性打分依赖它,不传则保留策略更"盲"。</li>
-      <li><strong>保留 stashKey</strong>:有损压缩的原文在 stash store 里,把 key 记下来,模型追问细节时用 <code>retrieve(key)</code> 取回原文再注入,端到端无损。</li>
+      <li><strong>按需传 query</strong>:用户当前的问题、Agent 当前步骤的意图可帮助相关性筛选。纯文本默认只做保守去重,不依赖 query 删除内容。</li>
+      <li><strong>按原文坐标读取</strong>:模型只追问局部时,优先用 Agent 已有的文件分片读取能力;原文不可直接访问时,再用 <code>retrieveLines</code> 从 stash 读取。需要全文时可用 <code>retrieve</code>。</li>
       <li><strong>成对使用实例 API</strong>:通过 <code>createSift</code> 压缩后,必须通过同一实例的 <code>retrieve</code> 恢复;顶层 API 和其他实例可能指向不同目录。</li>
       <li><strong>不用担心理解偏差</strong>:压缩只发生在消息内部,对话结构、tool_use/tool_result 配对完整保留;API key 等高熵凭证被强制识别并保留。</li>
       <li><strong>短内容不用管</strong>:单 block 小于 512 字节不参与压缩,直接透传,零开销。</li>

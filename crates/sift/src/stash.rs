@@ -8,6 +8,7 @@
 //! - [`InMemoryStashStore`]：内存实现（测试用），进程退出即丢。
 
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -53,11 +54,52 @@ pub fn contains_marker(text: &str) -> bool {
     false
 }
 
+/// stash 原文的按行切片。行号从 1 开始，`text` 保留命中行的原始换行字节。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StashSlice {
+    pub text: String,
+    pub start_line: usize,
+    pub line_count: usize,
+    pub total_lines: usize,
+    pub has_more: bool,
+}
+
+fn slice_content_lines(content: &str, start_line: usize, line_count: usize) -> Option<StashSlice> {
+    if start_line == 0 || line_count == 0 || content.is_empty() {
+        return None;
+    }
+    // `split_inclusive` 保留 LF/CRLF；结尾换行不额外制造一个空行。
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let total_lines = lines.len();
+    if start_line > total_lines {
+        return None;
+    }
+    let start = start_line - 1;
+    let end = start.saturating_add(line_count).min(total_lines);
+    Some(StashSlice {
+        text: lines[start..end].concat(),
+        start_line,
+        line_count: end - start,
+        total_lines,
+        has_more: end < total_lines,
+    })
+}
+
 /// 卸载存储 trait。
 pub trait StashStore: Send + Sync {
     /// 原文必须确认写入成功后，调用方才可以发布带 marker 的有损结果。
     fn put(&self, key: &str, content: &str) -> std::io::Result<()>;
     fn get(&self, key: &str) -> Option<String>;
+    /// 读取 stash 原文中的连续行；默认实现适用于内存或自定义后端。
+    fn get_lines(&self, key: &str, start_line: usize, line_count: usize) -> Option<StashSlice> {
+        let content = self.get(key)?;
+        slice_content_lines(&content, start_line, line_count)
+    }
+    /// 返回 Coding Agent 可直接读取的本地 stash 文件路径。
+    /// 内存、远程或不共享文件系统的后端保持 `None`，不得伪造路径。
+    fn file_path(&self, _key: &str) -> Option<PathBuf> {
+        None
+    }
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -80,9 +122,14 @@ impl FileStashStore {
     }
 
     pub fn with_ttl(dir: impl AsRef<Path>, ttl: Duration) -> std::io::Result<Self> {
-        std::fs::create_dir_all(dir.as_ref())?;
+        let dir = if dir.as_ref().is_absolute() {
+            dir.as_ref().to_path_buf()
+        } else {
+            std::env::current_dir()?.join(dir)
+        };
+        std::fs::create_dir_all(&dir)?;
         Ok(Self {
-            dir: dir.as_ref().to_path_buf(),
+            dir: std::fs::canonicalize(dir)?,
             ttl,
         })
     }
@@ -159,13 +206,55 @@ impl StashStore for FileStashStore {
         std::fs::read_to_string(&path).ok()
     }
 
+    fn get_lines(&self, key: &str, start_line: usize, line_count: usize) -> Option<StashSlice> {
+        if !is_valid_key(key) || start_line == 0 || line_count == 0 {
+            return None;
+        }
+        let path = self.dir.join(key);
+        if self.is_expired(&path) {
+            let _ = std::fs::remove_file(&path);
+            return None;
+        }
+
+        let file = std::fs::File::open(path).ok()?;
+        let mut reader = std::io::BufReader::new(file);
+        let mut buf = Vec::new();
+        let mut selected = Vec::new();
+        let mut total_lines = 0usize;
+        loop {
+            buf.clear();
+            let read = reader.read_until(b'\n', &mut buf).ok()?;
+            if read == 0 {
+                break;
+            }
+            total_lines += 1;
+            if total_lines >= start_line && total_lines < start_line.saturating_add(line_count) {
+                selected.extend_from_slice(&buf);
+            }
+        }
+        if start_line > total_lines {
+            return None;
+        }
+        let actual = total_lines.saturating_sub(start_line - 1).min(line_count);
+        Some(StashSlice {
+            text: String::from_utf8(selected).ok()?,
+            start_line,
+            line_count: actual,
+            total_lines,
+            has_more: start_line - 1 + actual < total_lines,
+        })
+    }
+
+    fn file_path(&self, key: &str) -> Option<PathBuf> {
+        is_valid_key(key).then(|| self.dir.join(key))
+    }
+
     fn len(&self) -> usize {
         std::fs::read_dir(&self.dir)
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
                     .filter(|e| {
-                        e.path().is_file()
-                            && !e.file_name().to_string_lossy().starts_with('.')
+                        e.path().is_file() && !e.file_name().to_string_lossy().starts_with('.')
                     })
                     .count()
             })
@@ -269,6 +358,52 @@ mod tests {
         let store2 = FileStashStore::new(&dir).unwrap();
         assert_eq!(store2.get(&k).unwrap(), "persist me");
         assert_eq!(store2.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_store_exposes_absolute_entry_path_for_direct_reads() {
+        let dir = test_dir("entry-path");
+        let store = FileStashStore::new(&dir).unwrap();
+        let key = compute_key("directly readable");
+
+        let path = store.file_path(&key).unwrap();
+        assert!(path.is_absolute());
+        assert_eq!(path, store.dir().join(key));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn in_memory_store_reads_exact_line_slice() {
+        let store = InMemoryStashStore::new();
+        let content = "alpha\r\nbeta\n\ngamma";
+        let key = compute_key(content);
+        store.put(&key, content).unwrap();
+
+        let slice = store.get_lines(&key, 2, 2).unwrap();
+        assert_eq!(slice.text, "beta\n\n");
+        assert_eq!(slice.start_line, 2);
+        assert_eq!(slice.line_count, 2);
+        assert_eq!(slice.total_lines, 4);
+        assert!(slice.has_more);
+    }
+
+    #[test]
+    fn file_store_line_slice_preserves_bytes_and_trailing_newline_semantics() {
+        let dir = test_dir("line-slice");
+        let store = FileStashStore::new(&dir).unwrap();
+        let content = "一\r\n二\n三\n";
+        let key = compute_key(content);
+        store.put(&key, content).unwrap();
+
+        let slice = store.get_lines(&key, 2, 10).unwrap();
+        assert_eq!(slice.text, "二\n三\n");
+        assert_eq!(slice.line_count, 2);
+        assert_eq!(slice.total_lines, 3);
+        assert!(!slice.has_more);
+        assert!(store.get_lines(&key, 4, 1).is_none());
+
         std::fs::remove_dir_all(&dir).ok();
     }
 

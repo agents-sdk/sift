@@ -8,8 +8,8 @@
 //! 冻结区的 Value 不被触碰，内容等价性由 Value 不变保证。真字节区间手术
 //! （保持 cache SHA 不变）需在更高层（HTTP 代理）实现。
 
-use crate::stash::{marker_for, StashStore};
 use crate::formats::TextCandidates;
+use crate::stash::{marker_for, StashStore};
 use crate::tokenizer::{EstimatingCounter, Tokenizer};
 use crate::transforms::tag_protector::{TagProtector, TagProtectorConfig};
 use crate::transforms::{compressor_for, reformat_for, CompressionContext};
@@ -77,6 +77,9 @@ pub fn compress_live_zone(
     let ctx = CompressionContext {
         query: query.map(|s| s.to_string()),
         token_budget: None,
+        source_path: None,
+        stash_file_path: None,
+        stash_line_offset: 0,
     };
     // 压缩前保护自定义 XML 标签，防止压缩器误伤；压缩后恢复。
     let protector = TagProtector::new(TagProtectorConfig::default());
@@ -149,6 +152,9 @@ pub(crate) enum BlockOutcome {
 /// 每段独立分发压缩器，不可压的段原样保留；返回 Some 仅当整体确实变小。
 /// 有损：原文由调用方（Lossy 分支）写入 stash store。
 fn route_mixed_fallback(text: &str, ctx: &CompressionContext) -> Option<String> {
+    // 行内 JSON span 没有整行坐标保证；不得继承整块的可读路径。
+    let mut span_ctx = ctx.clone();
+    span_ctx.stash_file_path = None;
     let sections = crate::mixed_content::split_into_sections(text);
     if sections.len() <= 1 {
         // 单一段落：嵌入 JSON span 仍可能存在（如 bash 回显 + jq 尾巴同行），
@@ -156,10 +162,10 @@ fn route_mixed_fallback(text: &str, ctx: &CompressionContext) -> Option<String> 
         let any = std::cell::Cell::new(false);
         let replaced = crate::recursive_json::replace_json_spans(text, |span| {
             let c = compressor_for(crate::content::detect_content_type(span))?;
-            match c.apply(span, ctx) {
-                Ok((out, _)) if out.len() < span.len() => {
+            match c.apply(span, &span_ctx) {
+                Ok(result) if result.compressed.len() < span.len() => {
                     any.set(true);
-                    Some(out)
+                    Some(result.compressed)
                 }
                 _ => None,
             }
@@ -175,14 +181,26 @@ fn route_mixed_fallback(text: &str, ctx: &CompressionContext) -> Option<String> 
     let mut out = String::with_capacity(text.len() / 2);
     let mut any = false;
     for (i, sec) in sections.iter().enumerate() {
+        let mut section_ctx = ctx.clone();
+        section_ctx.stash_line_offset += sec.start_line;
+        // 只在原始整行切片字节相等时传递坐标，JSON 字节切片等保守回退。
+        let original_section = text
+            .split('\n')
+            .skip(sec.start_line)
+            .take(sec.end_line - sec.start_line + 1)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if sec.content != original_section {
+            section_ctx.stash_file_path = None;
+        }
         if i > 0 && !out.ends_with('\n') {
             out.push('\n');
         }
         match compressor_for(sec.content_type) {
-            Some(c) => match c.apply(&sec.content, ctx) {
-                Ok((compressed, _)) if compressed.len() < sec.content.len() => {
+            Some(c) => match c.apply(&sec.content, &section_ctx) {
+                Ok(result) if result.compressed.len() < sec.content.len() => {
                     any = true;
-                    out.push_str(&compressed);
+                    out.push_str(&result.compressed);
                 }
                 _ => out.push_str(&sec.content),
             },
@@ -192,10 +210,10 @@ fn route_mixed_fallback(text: &str, ctx: &CompressionContext) -> Option<String> 
                 let seg_any = std::cell::Cell::new(false);
                 let replaced = crate::recursive_json::replace_json_spans(seg, |span| {
                     let c = compressor_for(crate::content::detect_content_type(span))?;
-                    match c.apply(span, ctx) {
-                        Ok((out, _)) if out.len() < span.len() => {
+                    match c.apply(span, &span_ctx) {
+                        Ok(result) if result.compressed.len() < span.len() => {
                             seg_any.set(true);
-                            Some(out)
+                            Some(result.compressed)
                         }
                         _ => None,
                     }
@@ -229,7 +247,23 @@ pub(crate) fn process_block_text(
 
     // secret 保护必须位于具体压缩器之上，确保 JSON、日志、搜索、diff、代码
     // 与纯文本走同一条安全规则。宁可少压，也不能把凭证只留在 stash 中。
-    if crate::secrets::contains_secret_token(text) {
+    let path_language = ctx
+        .source_path
+        .as_deref()
+        .map(crate::transforms::code_compressor::detect_language_from_path)
+        .unwrap_or(crate::transforms::code_compressor::CodeLanguage::Unknown);
+    let original_type =
+        if path_language != crate::transforms::code_compressor::CodeLanguage::Unknown {
+            crate::content::ContentType::SourceCode
+        } else {
+            crate::content::detect_content_type(text)
+        };
+    let contains_secret = if original_type == crate::content::ContentType::SourceCode {
+        crate::secrets::contains_secret_token_in_source(text)
+    } else {
+        crate::secrets::contains_secret_token(text)
+    };
+    if contains_secret {
         return BlockOutcome::Unchanged;
     }
 
@@ -261,22 +295,47 @@ pub(crate) fn process_block_text(
     };
 
     // 无损已缩够（≤ 80% 原体积）则跳过有损压缩，避免不必要的 stash 卸载。
-    let reformat_ratio =
-        tokenizer.count_text(&current) as f64 / original_tokens.max(1) as f64;
+    let reformat_ratio = tokenizer.count_text(&current) as f64 / original_tokens.max(1) as f64;
     if reformatted && reformat_ratio <= 0.8 {
         if let Some(outcome) = commit_lossless(&current) {
             return outcome;
         }
     }
 
-    // 阶段 2：有损压缩。reformat 缩不够（或没做）时，在重排后的文本上执行。
-    let content_type = crate::content::detect_content_type(&current);
+    // 阶段 2：落盘模式的有损压缩直接使用原文视图，不猜测模板化/重排行号。
+    // 已成功的无损结果仍作为无收益时的回退候选。
+    let key = crate::stash::compute_key(text);
+    let stash_path = store
+        .file_path(&key)
+        .and_then(|path| path.to_str().map(str::to_owned));
+    let lossy_input = if stash_path.is_some() && protected_text == text {
+        protected_text.as_str()
+    } else {
+        current.as_str()
+    };
+    let mut compressor_ctx = ctx.clone();
+    compressor_ctx.stash_line_offset = 0;
+    if lossy_input == text {
+        compressor_ctx.stash_file_path = stash_path;
+    } else {
+        compressor_ctx.source_path = None;
+        compressor_ctx.stash_file_path = None;
+    }
+    let content_type = if lossy_input == text
+        && path_language != crate::transforms::code_compressor::CodeLanguage::Unknown
+    {
+        crate::content::ContentType::SourceCode
+    } else {
+        crate::content::detect_content_type(lossy_input)
+    };
 
     // 混合内容优先：整块落到 PlainText 兜底时，先尝试分段路由 +
     // 嵌入 JSON span 路由（split_into_sections + recursive_json）
     // ——分段比整块纯文本压缩精准。
     if content_type == crate::content::ContentType::PlainText {
-        if let Some(compressed) = route_mixed_fallback(&current, ctx) {
+        let mut mixed_ctx = compressor_ctx.clone();
+        mixed_ctx.source_path = None;
+        if let Some(compressed) = route_mixed_fallback(lossy_input, &mixed_ctx) {
             let key = crate::stash::compute_key(text);
             let mut final_text = compressed;
             final_text.push_str(&marker_for(&key));
@@ -303,7 +362,7 @@ pub(crate) fn process_block_text(
         };
     };
 
-    let (compressed_protected, _) = match compressor.apply(&current, ctx) {
+    let offload = match compressor.apply(lossy_input, &compressor_ctx) {
         Ok(r) => r,
         // 无压缩空间（Skipped）或输入不符（InvalidInput）：
         // 若 reformat 有收益则保留无损结果。
@@ -316,7 +375,7 @@ pub(crate) fn process_block_text(
     };
 
     // 恢复标签占位符，得到最终输出。
-    let compressed = protector.restore(&compressed_protected, &tag_map);
+    let compressed = protector.restore(&offload.compressed, &tag_map);
     if compressed.is_empty() || compressed == text {
         return match (reformatted, commit_lossless(&current)) {
             (true, Some(outcome)) => outcome,
@@ -325,8 +384,6 @@ pub(crate) fn process_block_text(
     }
 
     // stash 存保护前的真正原文，保证 retrieve 拿回完整内容。
-    let key = compressor.cache_key(text);
-    let _ = store; // store 写入由调用方完成（见 Lossy 分支）
     let mut final_text = compressed;
     final_text.push_str(&marker_for(&key));
     // 收益校验必须覆盖真正发送给模型的最终文本，包括 marker 开销。
@@ -347,7 +404,7 @@ pub(crate) fn process_block_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stash::InMemoryStashStore;
+    use crate::stash::{FileStashStore, InMemoryStashStore};
     use serde_json::json;
 
     struct FailingStore;
@@ -416,7 +473,10 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.changed, "outcome={:?}", outcome);
-        assert!(outcome.stash_stored >= 1, "混合路由应有损+stash: {outcome:?}");
+        assert!(
+            outcome.stash_stored >= 1,
+            "混合路由应有损+stash: {outcome:?}"
+        );
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
         // 文本段保留、JSON 段被压、含取回标记。
         assert!(txt.contains("$ gh api repos/x/y/issues"));
@@ -487,6 +547,102 @@ mod tests {
         let key = &txt[marker_start + "<<stash:".len()..txt.len() - 2];
         let restored = store.get(key).expect("原文应可从 stash store 回取");
         assert_eq!(restored, serde_json::to_string(&rows).unwrap());
+    }
+
+    #[test]
+    fn exact_code_omission_is_rendered_inline_with_file_slice_coordinates() {
+        let mut code = String::from("use std::collections::HashMap;\n\nfn build() -> usize {\n");
+        for i in 0..40 {
+            code.push_str(&format!("    let value_{i} = {i};\n"));
+        }
+        code.push_str("    value_39\n}\n");
+        let dir = std::env::temp_dir().join(format!("sift-live-code-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let store = FileStashStore::new(&dir).unwrap();
+        let ctx = CompressionContext {
+            source_path: Some("/workspace/src/lib.rs".to_string()),
+            ..CompressionContext::default()
+        };
+        let protector = TagProtector::new(TagProtectorConfig::default());
+        let tokenizer = EstimatingCounter::new();
+
+        let BlockOutcome::Lossy {
+            new_text,
+            stash_key,
+            ..
+        } = process_block_text(&code, &store, &ctx, &protector, &tokenizer)
+        else {
+            panic!("长代码应进入有损路径");
+        };
+        let stash_path = store.file_path(&stash_key).unwrap();
+        let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
+        assert!(new_text.contains(&format!(
+            "// ... 41 lines omitted from file {stash_path}, starting at line 4"
+        )));
+        assert!(!new_text.contains("[sift: omitted"));
+        assert!(!new_text.contains("retrieveLines"));
+        assert!(new_text.ends_with(&marker_for(&stash_key)));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn official_java_demo_remains_compressible() {
+        let code = include_str!("../tests/fixtures/order_service.java");
+        let dir = std::env::temp_dir().join(format!("sift-live-java-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let store = FileStashStore::new(&dir).unwrap();
+        let ctx = CompressionContext {
+            source_path: Some(
+                "src/main/java/com/example/orders/service/OrderService.java".to_string(),
+            ),
+            ..CompressionContext::default()
+        };
+        let protector = TagProtector::new(TagProtectorConfig::default());
+        let tokenizer = EstimatingCounter::new();
+
+        let outcome = process_block_text(code, &store, &ctx, &protector, &tokenizer);
+        let (new_text, stash_key) = match outcome {
+            BlockOutcome::Lossy {
+                new_text,
+                stash_key,
+                ..
+            } => (new_text, stash_key),
+            BlockOutcome::Unchanged => panic!("官网 Java 样例不应保持不变"),
+            BlockOutcome::Lossless(..) => panic!("官网 Java 样例不应只做无损压缩"),
+            BlockOutcome::Reverted => panic!("官网 Java 样例不应因收益不足回退"),
+        };
+        assert!(new_text.contains("public class OrderService"));
+        let stash_path = store.file_path(&stash_key).unwrap();
+        let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
+        assert!(new_text.contains(&format!(
+            "// ... 30 lines omitted from file {stash_path}, starting at line 32"
+        )));
+        assert!(!new_text.contains("[sift: omitted"));
+        assert!(new_text.len() < code.len());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn changed_tag_mapping_suppresses_line_range_hint() {
+        let mut code = String::from(
+            "<custom-meta>\nthese lines\nare protected\n</custom-meta>\nuse std::collections::HashMap;\n\nfn build() -> usize {\n",
+        );
+        for i in 0..40 {
+            code.push_str(&format!("    let value_{i} = {i};\n"));
+        }
+        code.push_str("    value_39\n}\n");
+        let store = InMemoryStashStore::new();
+        let ctx = CompressionContext::default();
+        let protector = TagProtector::new(TagProtectorConfig::default());
+        let tokenizer = EstimatingCounter::new();
+
+        let BlockOutcome::Lossy { new_text, .. } =
+            process_block_text(&code, &store, &ctx, &protector, &tokenizer)
+        else {
+            panic!("带受保护标签的长代码仍应可有损压缩");
+        };
+        assert!(!new_text.contains("omitted from file"));
+        assert!(!new_text.contains("starting at line"));
     }
 
     #[test]
@@ -563,7 +719,7 @@ mod tests {
     #[test]
     fn compresses_chat_completions_tool_text_parts() {
         // tool 的 parts 数组 content：各 type:"text" part 独立压缩，image_url part 不动。
-        let big = "line of log output\n".repeat(60);
+        let big = "line of log output\n\n".repeat(60);
         let mut b = json!({
             "messages": [
                 {"role": "tool", "tool_call_id": "c1", "content": [
@@ -630,9 +786,7 @@ mod tests {
 
     #[test]
     fn chat_trailing_tool_output_is_compressed() {
-        let rows: Vec<Value> = (0..200)
-            .map(|i| json!({"id": i, "status": "ok"}))
-            .collect();
+        let rows: Vec<Value> = (0..200).map(|i| json!({"id": i, "status": "ok"})).collect();
         let raw = serde_json::to_string(&rows).unwrap();
         let mut b = json!({"model": "gpt-5", "messages": [
             {"role": "user", "content": "fetch"},
@@ -652,9 +806,7 @@ mod tests {
 
     #[test]
     fn responses_trailing_function_output_is_compressed() {
-        let rows: Vec<Value> = (0..200)
-            .map(|i| json!({"id": i, "status": "ok"}))
-            .collect();
+        let rows: Vec<Value> = (0..200).map(|i| json!({"id": i, "status": "ok"})).collect();
         let raw = serde_json::to_string(&rows).unwrap();
         let mut b = json!({"model": "gpt-5", "input": [
             {"role": "user", "content": [{"type": "input_text", "text": "fetch"}]},
@@ -692,9 +844,7 @@ mod tests {
 
     #[test]
     fn stash_write_failure_reverts_lossy_block() {
-        let rows: Vec<Value> = (0..200)
-            .map(|i| json!({"id": i, "status": "ok"}))
-            .collect();
+        let rows: Vec<Value> = (0..200).map(|i| json!({"id": i, "status": "ok"})).collect();
         let raw = serde_json::to_string(&rows).unwrap();
         let mut b = json!({"messages": [
             {"role": "user", "content": [

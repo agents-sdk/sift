@@ -10,9 +10,11 @@
 //! 有损变换，实现 [`crate::transforms::OffloadTransform`]：原文经 `apply`
 //! 返回给调用方写入 stash store，端到端无损。
 
-use crate::stash;
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
+use crate::stash;
+use crate::transforms::{
+    CompressionContext, OffloadOutput, OffloadTransform, OmissionRange, TransformError,
+};
 use tree_sitter::{Parser, Tree};
 
 // ─── 语言与配置 ───────────────────────────────────────────────────────────
@@ -162,6 +164,8 @@ pub struct CodeCompressionResult {
     pub compression_ratio: f64,
     /// 折叠的函数体个数。
     pub bodies_folded: usize,
+    /// 被折叠的原文连续行范围（1-based）。
+    pub omissions: Vec<OmissionRange>,
     pub passthrough: bool,
 }
 
@@ -195,13 +199,33 @@ pub fn detect_language(code: &str) -> CodeLanguage {
     if joined.contains("interface ") || joined.contains(": string") || joined.contains(": number") {
         return CodeLanguage::Typescript;
     }
-    if joined.contains("function ")
-        || joined.contains("const ")
-        || joined.contains("=>")
-    {
+    if joined.contains("function ") || joined.contains("const ") || joined.contains("=>") {
         return CodeLanguage::Javascript;
     }
     CodeLanguage::Unknown
+}
+
+/// 根据调用方提供的源文件路径识别语言。
+///
+/// 路径比短代码片段的内容启发式更可靠，也让只含一个长函数的文件能够稳定进入
+/// AST 压缩。只接受明确映射到现有 tree-sitter grammar 的扩展名。
+pub fn detect_language_from_path(path: &str) -> CodeLanguage {
+    let extension = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "py" | "pyi" => CodeLanguage::Python,
+        "js" | "jsx" | "mjs" | "cjs" => CodeLanguage::Javascript,
+        "ts" | "tsx" | "mts" | "cts" => CodeLanguage::Typescript,
+        "go" => CodeLanguage::Go,
+        "rs" => CodeLanguage::Rust,
+        "java" => CodeLanguage::Java,
+        "c" => CodeLanguage::C,
+        "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => CodeLanguage::Cpp,
+        _ => CodeLanguage::Unknown,
+    }
 }
 
 fn parser_for(language: CodeLanguage) -> Option<Parser> {
@@ -217,10 +241,7 @@ fn parser_for(language: CodeLanguage) -> Option<Parser> {
         CodeLanguage::Cpp => tree_sitter_cpp::LANGUAGE,
         CodeLanguage::Unknown => return None,
     };
-    parser
-        .set_language(&language.into())
-        .map_err(|_| ())
-        .ok()?;
+    parser.set_language(&language.into()).map_err(|_| ()).ok()?;
     Some(parser)
 }
 
@@ -263,6 +284,16 @@ impl CodeAwareCompressor {
     }
 
     pub fn compress(&self, code: &str) -> CodeCompressionResult {
+        self.compress_with_hints(code, None, None, 0)
+    }
+
+    fn compress_with_hints(
+        &self,
+        code: &str,
+        source_path: Option<&str>,
+        stash_file_path: Option<&str>,
+        stash_line_offset: usize,
+    ) -> CodeCompressionResult {
         let passthrough = |lang: CodeLanguage| CodeCompressionResult {
             compressed: code.to_string(),
             language: lang,
@@ -270,6 +301,7 @@ impl CodeAwareCompressor {
             compressed_tokens: estimate_tokens(code),
             compression_ratio: 1.0,
             bodies_folded: 0,
+            omissions: Vec::new(),
             passthrough: true,
         };
 
@@ -281,7 +313,10 @@ impl CodeAwareCompressor {
             return passthrough(CodeLanguage::Unknown);
         }
 
-        let lang = detect_language(code);
+        let lang = source_path
+            .map(detect_language_from_path)
+            .filter(|language| *language != CodeLanguage::Unknown)
+            .unwrap_or_else(|| detect_language(code));
         let Some(cfg) = lang_config(lang) else {
             return passthrough(lang);
         };
@@ -289,7 +324,12 @@ impl CodeAwareCompressor {
             return passthrough(lang);
         };
 
-        let lines: Vec<&str> = code.split('\n').collect();
+        let mut lines: Vec<&str> = code.split('\n').collect();
+        // 以 `\n` 结尾时 `split` 会产生一个空的尾元素；重建循环会给每行补 `\n`，
+        // 不弹掉会把幻影行也输出，导致末尾多一个空行。只弹这一个，保留真实的结尾空行。
+        if code.ends_with('\n') {
+            lines.pop();
+        }
         let root = tree.root_node();
 
         // 收集结构骨架：imports / package / 类型整段保留；类只保留头
@@ -356,14 +396,27 @@ impl CodeAwareCompressor {
 
         let mut out = String::with_capacity(code.len() / 2);
         let mut bodies_folded = 0usize;
+        let mut omissions = Vec::new();
+        let mut cursor = 0usize;
         for (start, end, is_fn) in &pieces {
-            let seg_lines = &lines[*start..=(*end).min(lines.len() - 1)];
+            let end = (*end).min(lines.len() - 1);
+            if *start > cursor {
+                for line in &lines[cursor..*start] {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            if *start < cursor {
+                continue;
+            }
+            let seg_lines = &lines[*start..=end];
             if !is_fn {
                 // 整段保留
                 for l in seg_lines {
                     out.push_str(l);
                     out.push('\n');
                 }
+                cursor = end + 1;
                 continue;
             }
             // 函数：找 body 起始行（签名 = body 前的行）
@@ -372,6 +425,7 @@ impl CodeAwareCompressor {
                     out.push_str(l);
                     out.push('\n');
                 }
+                cursor = end + 1;
                 continue;
             }
             // 折叠：保留签名（到 body 起始行——`{` 或 Python `:` 结尾）+ 折叠注释 + 尾行
@@ -389,18 +443,35 @@ impl CodeAwareCompressor {
             }
             let omitted = seg_lines.len().saturating_sub(keep_sig + 1);
             if omitted > 0 {
-                out.push_str(&format!(
-                    "    {} ... {} lines omitted\n",
-                    cfg.comment_prefix,
-                    omitted.saturating_sub(1)
-                ));
+                if let Some(path) = super::line_omissions::actionable_file_path(stash_file_path) {
+                    let range = OmissionRange {
+                        start_line: start + keep_sig + 1,
+                        line_count: omitted,
+                    };
+                    let hint = super::line_omissions::hint(path, &range, stash_line_offset);
+                    out.push_str(&format!("    {} ... {hint}\n", cfg.comment_prefix));
+                } else {
+                    out.push_str(&format!(
+                        "    {} ... {} lines omitted\n",
+                        cfg.comment_prefix, omitted
+                    ));
+                }
                 // 保留尾行（闭括号），维持语法合法
                 if let Some(last) = seg_lines.last() {
                     out.push_str(last);
                     out.push('\n');
                 }
+                omissions.push(OmissionRange {
+                    start_line: start + keep_sig + 1,
+                    line_count: omitted,
+                });
                 bodies_folded += 1;
             }
+            cursor = end + 1;
+        }
+        for line in &lines[cursor..] {
+            out.push_str(line);
+            out.push('\n');
         }
 
         // 语法校验：折叠后的代码必须仍可解析
@@ -419,6 +490,7 @@ impl CodeAwareCompressor {
             compressed_tokens,
             compression_ratio: ratio,
             bodies_folded,
+            omissions,
             passthrough: false,
         }
     }
@@ -448,7 +520,10 @@ impl OffloadTransform for CodeAwareCompressor {
     fn estimate_bloat(&self, input: &str) -> f64 {
         // 粗估：代码中函数体行占比（近似可折叠比例）
         let total = input.lines().count().max(1);
-        let indented = input.lines().filter(|l| l.starts_with(' ') || l.starts_with('\t')).count();
+        let indented = input
+            .lines()
+            .filter(|l| l.starts_with(' ') || l.starts_with('\t'))
+            .count();
         indented as f64 / total as f64
     }
 
@@ -459,13 +534,22 @@ impl OffloadTransform for CodeAwareCompressor {
     fn apply(
         &self,
         input: &str,
-        _ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
-        let result = self.compress(input);
+        ctx: &CompressionContext,
+    ) -> Result<OffloadOutput, TransformError> {
+        let result = self.compress_with_hints(
+            input,
+            ctx.source_path.as_deref(),
+            ctx.stash_file_path.as_deref(),
+            ctx.stash_line_offset,
+        );
         if result.passthrough || result.compressed == input {
             return Err(TransformError::Skipped);
         }
-        Ok((result.compressed, input.to_string()))
+        Ok(OffloadOutput {
+            compressed: result.compressed,
+            original: input.to_string(),
+            omissions: result.omissions,
+        })
     }
 }
 
@@ -492,8 +576,25 @@ mod tests {
         assert!(!r.passthrough, "ratio={}", r.compression_ratio);
         assert!(r.compressed.len() < long_python().len());
         assert!(r.compressed.contains("lines omitted"));
+        assert_eq!(
+            r.omissions,
+            vec![OmissionRange {
+                start_line: 6,
+                line_count: 30,
+            }]
+        );
         assert!(r.compressed.contains("def helper"));
         assert!(r.compressed.contains("import os"));
+    }
+
+    #[test]
+    fn trailing_newline_input_does_not_gain_blank_line() {
+        // 回归：`long_python()` 以 '\n' 结尾，输出不得再补一个幻影空行。
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let r = c.compress(&long_python());
+        assert!(!r.passthrough);
+        assert!(r.compressed.ends_with("    return helper(2)\n"));
+        assert!(!r.compressed.ends_with("\n\n"));
     }
 
     #[test]
@@ -528,10 +629,17 @@ mod tests {
     #[test]
     fn offload_apply_roundtrip() {
         let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
-        let ctx = CompressionContext::default();
-        let (compressed, original) = c.apply(&long_python(), &ctx).unwrap();
-        assert!(compressed.contains("lines omitted"));
-        assert_eq!(original, long_python());
+        let ctx = CompressionContext {
+            source_path: Some("/workspace/app.py".to_string()),
+            stash_file_path: Some("/tmp/sift-stash/0123456789abcdef01234567".to_string()),
+            ..CompressionContext::default()
+        };
+        let result = c.apply(&long_python(), &ctx).unwrap();
+        assert!(result
+            .compressed
+            .contains(r#"# ... 30 lines omitted from file "/tmp/sift-stash/0123456789abcdef01234567", starting at line 6"#));
+        assert_eq!(result.original, long_python());
+        assert_eq!(result.omissions.len(), 1);
     }
 
     #[test]
@@ -562,8 +670,47 @@ mod tests {
     }
 
     #[test]
+    fn folds_annotated_java_class_without_dropping_declaration() {
+        let mut s = String::from(
+            "package com.example.orders;\n\nimport org.springframework.stereotype.Service;\n\n@Service\npublic class OrderService {\n    private final Repo repo;\n\n    @Transactional\n    public void createOrder(int x) {\n",
+        );
+        for i in 0..30 {
+            s.push_str(&format!("        int value{i} = x + {i};\n"));
+        }
+        s.push_str("        repo.save(x);\n    }\n}\n");
+
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let r = c.compress(&s);
+
+        assert!(!r.passthrough, "annotated Java class should compress");
+        assert!(r
+            .compressed
+            .contains("@Service\npublic class OrderService {"));
+        assert!(r.compressed.contains("public void createOrder"));
+        assert!(r.compressed.contains("lines omitted"));
+    }
+
+    #[test]
+    fn compresses_official_java_demo_fixture() {
+        let code = include_str!("../../tests/fixtures/order_service.java");
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let r = c.compress(code);
+
+        assert!(
+            !r.passthrough,
+            "official Java demo should compress, output={}",
+            r.compressed
+        );
+        assert!(r.compressed.contains("public class OrderService"));
+        assert!(r.bodies_folded >= 1);
+    }
+
+    #[test]
     fn go_and_java_detected() {
-        assert_eq!(detect_language("package main\n\nfunc main() {}"), CodeLanguage::Go);
+        assert_eq!(
+            detect_language("package main\n\nfunc main() {}"),
+            CodeLanguage::Go
+        );
         assert_eq!(
             detect_language("public class A { public static void main(String[] a) {} }"),
             CodeLanguage::Java

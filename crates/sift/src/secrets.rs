@@ -40,7 +40,11 @@ pub fn normalized_shannon_entropy(s: &str) -> f64 {
     }
     // 归一化：除以当前字符集的最大可能熵。
     let unique = freq.len();
-    let max_entropy = if unique > 1 { (unique as f64).log2() } else { 1.0 };
+    let max_entropy = if unique > 1 {
+        (unique as f64).log2()
+    } else {
+        1.0
+    };
     if max_entropy > 0.0 {
         entropy / max_entropy
     } else {
@@ -73,8 +77,25 @@ pub fn find_secret_lines(text: &str) -> Vec<usize> {
 /// `[A-Za-z0-9_-]` 视为一个候选，避免把整行 compact JSON、grep 结果或 URL
 /// 当成一个超长高熵 token 而误判。
 pub fn contains_secret_token(text: &str) -> bool {
+    credential_candidates(text).any(is_secret_like)
+}
+
+/// 源代码中的凭证检测。
+///
+/// 源码里常见很长且字符多样的纯字母标识符（例如 Java 异常类名和 camelCase
+/// repository 方法），仅凭归一化熵会产生大量误报。源码候选因此还必须包含数字、
+/// `_` 或 `-`；常见 API key、UUID、hex token 仍会命中。
+pub fn contains_secret_token_in_source(text: &str) -> bool {
+    credential_candidates(text).any(|candidate| {
+        is_secret_like(candidate)
+            && candidate
+                .bytes()
+                .any(|byte| byte.is_ascii_digit() || byte == b'_' || byte == b'-')
+    })
+}
+
+fn credential_candidates(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-        .any(is_secret_like)
 }
 
 // ────────────────────────────── 单元测试 ──────────────────────────────
@@ -96,7 +117,10 @@ mod tests {
         // 每个字符等频：熵 = log2(n)，归一化后恰为 1.0。
         let s = "abcdefghijklmnopqrstuvwxyz";
         let e = normalized_shannon_entropy(s);
-        assert!((e - 1.0).abs() < 1e-12, "等频字符集归一化熵应为 1.0, got {e}");
+        assert!(
+            (e - 1.0).abs() < 1e-12,
+            "等频字符集归一化熵应为 1.0, got {e}"
+        );
     }
 
     #[test]
@@ -191,19 +215,27 @@ mod tests {
 
     #[test]
     fn find_secret_lines_multiple_tokens_same_line() {
-        let text = format!(
-            "prefix {}\nplain",
-            "91f0d3ab62c4e8577a3b9c1d4e5f6071"
-        );
+        let text = format!("prefix {}\nplain", "91f0d3ab62c4e8577a3b9c1d4e5f6071");
         assert_eq!(find_secret_lines(&text), vec![0]);
     }
 
     #[test]
     fn structured_secret_scan_avoids_compact_json_false_positive() {
-        let json = r#"[{"id":1,"name":"item-1","status":"ok"},{"id":2,"name":"item-2","status":"ok"}]"#;
+        let json =
+            r#"[{"id":1,"name":"item-1","status":"ok"},{"id":2,"name":"item-2","status":"ok"}]"#;
         assert!(!contains_secret_token(json));
 
         let with_key = r#"{"token":"ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw"}"#;
         assert!(contains_secret_token(with_key));
+    }
+
+    #[test]
+    fn source_scan_ignores_long_identifiers_but_keeps_common_credentials() {
+        let java = "OrderNotFoundException findByUserIdOrderByCreatedAtDesc";
+        assert!(contains_secret_token(java));
+        assert!(!contains_secret_token_in_source(java));
+
+        let with_key = r#"String token = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";"#;
+        assert!(contains_secret_token_in_source(with_key));
     }
 }

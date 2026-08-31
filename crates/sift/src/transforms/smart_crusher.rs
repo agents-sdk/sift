@@ -23,13 +23,13 @@
 //! - relevance 打分简化为锚点精确匹配（确定性），无概率 BM25。
 //!
 //! 实现的是 [`OffloadTransform`]：压缩是有损的（丢弃行 + 采样标注），
-//! 原文由调用方进 offload store，`apply` 返回 `(compressed, original)`。
+//! 原文由调用方进 offload store，`apply` 返回结构化卸载结果。
 
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
+use crate::transforms::{CompressionContext, OffloadOutput, OffloadTransform, TransformError};
 
 // ────────────────────────────── 配置 ──────────────────────────────
 
@@ -1616,7 +1616,7 @@ impl SmartCrusher {
 }
 
 /// 实现 [`OffloadTransform`]：SmartCrusher 是有损压缩（行丢弃 + 采样标注），
-/// 被丢弃的原文需要由调用方存入 offload store，因此返回 `(compressed, original)`。
+/// 被丢弃的原文需要由调用方存入 offload store，因此返回结构化卸载结果。
 /// 而非 ReformatTransform（后者要求输出可完全重建原文）。
 impl OffloadTransform for SmartCrusher {
     fn name(&self) -> &'static str {
@@ -1648,7 +1648,7 @@ impl OffloadTransform for SmartCrusher {
         &self,
         input: &str,
         ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
+    ) -> Result<OffloadOutput, TransformError> {
         let (compact, was_modified) = self.crush(input, ctx.query.as_deref())?;
         if !was_modified {
             // 无压缩空间（太小 / 不可压 / 输出等价）：交给上层走原样。
@@ -1659,7 +1659,7 @@ impl OffloadTransform for SmartCrusher {
             serde_json::from_str(&compact).map_err(|e| TransformError::Internal(e.to_string()))?;
         let pretty = serde_json::to_string_pretty(&parsed)
             .map_err(|e| TransformError::Internal(e.to_string()))?;
-        Ok((pretty, input.to_string()))
+        Ok(OffloadOutput::new(pretty, input.to_string()))
     }
 }
 
@@ -1678,6 +1678,9 @@ mod tests {
         CompressionContext {
             query: query.map(|q| q.to_string()),
             token_budget: None,
+            source_path: None,
+            stash_file_path: None,
+            stash_line_offset: 0,
         }
     }
 
@@ -1797,24 +1800,24 @@ mod tests {
         let mut items: Vec<Value> = (0..60).map(|i| json!({"id": i, "status": "ok"})).collect();
         items.push(json!({"id": 60, "status": "error"}));
         let input = serde_json::to_string(&items).unwrap();
-        let (compressed, original) = crusher().apply(&input, &ctx(None)).expect("应可压缩");
-        assert_eq!(original, input, "原文应原样返回（offload store 用）");
+        let result = crusher().apply(&input, &ctx(None)).expect("应可压缩");
+        assert_eq!(result.original, input, "原文应原样返回（offload store 用）");
         assert!(
-            compressed.contains("_dropped_count"),
+            result.compressed.contains("_dropped_count"),
             "必须标注 dropped 计数"
         );
         assert!(
-            compressed.contains("_dropped_sample"),
+            result.compressed.contains("_dropped_sample"),
             "必须带 dropped 采样"
         );
         assert!(
-            compressed.contains("\"status\": \"error\""),
+            result.compressed.contains("\"status\": \"error\""),
             "错误行必须在输出中"
         );
         // status 直方图：丢弃行全是 ok。
-        assert!(compressed.contains("_dropped_field_summary"));
+        assert!(result.compressed.contains("_dropped_field_summary"));
         // 输出是合法 JSON 数组。
-        let parsed: Value = serde_json::from_str(&compressed).unwrap();
+        let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
         assert!(parsed.is_array());
     }
 
@@ -2032,12 +2035,15 @@ mod tests {
         let mut inner: Vec<Value> = (0..40).map(|i| json!({"id": i, "status": "ok"})).collect();
         inner.push(json!({"id": 40, "status": "error", "msg": "failed"}));
         let input = serde_json::to_string(&json!({"data": inner, "total": 41})).unwrap();
-        let (compressed, _) = crusher()
+        let result = crusher()
             .apply(&input, &ctx(None))
             .expect("嵌套数组应被压缩");
-        let parsed: Value = serde_json::from_str(&compressed).unwrap();
-        assert!(compressed.contains("_dropped_count"));
-        assert!(compressed.contains("\"error\""), "嵌套的错误行必须保留");
+        let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
+        assert!(result.compressed.contains("_dropped_count"));
+        assert!(
+            result.compressed.contains("\"error\""),
+            "嵌套的错误行必须保留"
+        );
         assert_eq!(parsed["total"], json!(41));
     }
 

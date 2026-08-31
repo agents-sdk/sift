@@ -508,10 +508,7 @@ enum SpanKind {
     CloseMarker,
 }
 
-fn protect_impl(
-    text: &str,
-    config: &TagProtectorConfig,
-) -> (String, TagMap, ProtectStats) {
+fn protect_impl(text: &str, config: &TagProtectorConfig) -> (String, TagMap, ProtectStats) {
     let mut stats = ProtectStats::default();
     if text.is_empty() || !text.contains('<') {
         return (text.to_string(), Vec::new(), stats);
@@ -535,11 +532,7 @@ fn protect_impl(
     }
 }
 
-fn identify_spans(
-    text: &str,
-    config: &TagProtectorConfig,
-    stats: &mut ProtectStats,
-) -> Vec<Span> {
+fn identify_spans(text: &str, config: &TagProtectorConfig, stats: &mut ProtectStats) -> Vec<Span> {
     let bytes = text.as_bytes();
     let n = bytes.len();
     let mut spans: Vec<Span> = Vec::new();
@@ -654,11 +647,7 @@ fn identify_spans(
     spans
 }
 
-fn emit_output(
-    text: &str,
-    spans: &[Span],
-    prefix: &str,
-) -> Option<(String, TagMap)> {
+fn emit_output(text: &str, spans: &[Span], prefix: &str) -> Option<(String, TagMap)> {
     let mut out = String::with_capacity(text.len());
     let mut blocks: TagMap = Vec::new();
     let mut cursor: usize = 0;
@@ -863,10 +852,7 @@ mod tests {
     fn restore_lost_placeholder_discards_wrap() {
         // Hotfix-A9：占位符从压缩文本中丢失时，wrap 被丢弃 —— 压缩文本原样
         // 返回，不注入孤儿标签。
-        let blocks = vec![(
-            "{{CMPR_TAG_0}}".to_string(),
-            "<tag>data</tag>".to_string(),
-        )];
+        let blocks = vec![("{{CMPR_TAG_0}}".to_string(), "<tag>data</tag>".to_string())];
         let compressed = "text without placeholder";
         let restored = restore_tags(compressed, &blocks);
         assert_eq!(restored, compressed);
@@ -878,10 +864,7 @@ mod tests {
     fn restore_partial_loss_keeps_present_drops_lost() {
         let blocks = vec![
             ("{{CMPR_TAG_0}}".to_string(), "<a>1</a>".to_string()),
-            (
-                "{{CMPR_TAG_1}}".to_string(),
-                "<lost>x</lost>".to_string(),
-            ),
+            ("{{CMPR_TAG_1}}".to_string(), "<lost>x</lost>".to_string()),
         ];
         let compressed = "head {{CMPR_TAG_0}} tail";
         let restored = restore_tags(compressed, &blocks);

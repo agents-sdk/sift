@@ -3,8 +3,8 @@
 //! 复用 live_zone 的单候选压缩管线（保护标签 → 无损 reformat 短路 →
 //! 有损压缩 → token 校验 → stash 卸载），有损时输出尾部带 `<<stash:KEY>>` 标记。
 
-use crate::stash::StashStore;
 use crate::live_zone::{process_block_text, BlockOutcome};
+use crate::stash::StashStore;
 use crate::tokenizer::EstimatingCounter;
 use crate::transforms::tag_protector::{TagProtector, TagProtectorConfig};
 use crate::transforms::CompressionContext;
@@ -35,6 +35,17 @@ pub fn compress_text(
     store: Option<&dyn StashStore>,
     query: Option<&str>,
 ) -> TextCompressResult {
+    compress_text_with_source_path(text, store, query, None)
+}
+
+/// 压缩单个字符串，并在输入与源文件逐行对应时把可选文件路径传给代码压缩器。
+/// 使用落盘 stash 时，按行抽取的省略点引用其绝对文件路径、行数和准确起始行。
+pub fn compress_text_with_source_path(
+    text: &str,
+    store: Option<&dyn StashStore>,
+    query: Option<&str>,
+    source_path: Option<&str>,
+) -> TextCompressResult {
     let passthrough = || TextCompressResult {
         changed: false,
         lossy: false,
@@ -53,6 +64,9 @@ pub fn compress_text(
     let ctx = CompressionContext {
         query: query.map(|s| s.to_string()),
         token_budget: None,
+        source_path: source_path.map(str::to_string),
+        stash_file_path: None,
+        stash_line_offset: 0,
     };
     let protector = TagProtector::new(TagProtectorConfig::default());
 
@@ -90,7 +104,7 @@ pub fn compress_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stash::InMemoryStashStore;
+    use crate::stash::{FileStashStore, InMemoryStashStore};
     use crate::tokenizer::Tokenizer;
     use serde_json::json;
 
@@ -147,7 +161,10 @@ mod tests {
         let mut raw = String::new();
         for i in 1..=60 {
             let f = files[i % 3];
-            raw.push_str(&format!("{f}:{}:siftText StashStore related handler {i}\n", i * 13));
+            raw.push_str(&format!(
+                "{f}:{}:siftText StashStore related handler {i}\n",
+                i * 13
+            ));
         }
         let store = InMemoryStashStore::new();
         let r = compress_text(&raw, Some(&store), Some("siftText StashStore"));
@@ -184,9 +201,7 @@ mod tests {
 
     #[test]
     fn already_compressed_text_is_idempotent() {
-        let rows: Vec<_> = (0..200)
-            .map(|i| json!({"id": i, "status": "ok"}))
-            .collect();
+        let rows: Vec<_> = (0..200).map(|i| json!({"id": i, "status": "ok"})).collect();
         let raw = serde_json::to_string(&rows).unwrap();
         let store = InMemoryStashStore::new();
         let first = compress_text(&raw, Some(&store), None);
@@ -197,5 +212,152 @@ mod tests {
         assert!(!second.changed);
         assert_eq!(second.text, first.text);
         assert_eq!(second.text.matches("<<stash:").count(), 1);
+    }
+
+    #[test]
+    fn source_path_routes_all_supported_languages_to_inline_file_slices() {
+        fn source(prefix: &str, body: &str, suffix: &str) -> String {
+            let mut text = prefix.to_string();
+            for i in 0..35 {
+                text.push_str(&body.replace("$i", &i.to_string()));
+                text.push('\n');
+            }
+            text.push_str(suffix);
+            text
+        }
+
+        let cases = [
+            (
+                "/workspace/src/demo.py",
+                source(
+                    "def build(x):\n",
+                    "    value_$i = x + $i",
+                    "    return value_0\n",
+                ),
+                ("#", 2, 35),
+            ),
+            (
+                "/workspace/src/demo.js",
+                source(
+                    "function build(x) {\n",
+                    "  const value_$i = x + $i;",
+                    "  return value_0;\n}\n",
+                ),
+                ("//", 2, 36),
+            ),
+            (
+                "/workspace/src/demo.ts",
+                source(
+                    "function build(x: number): number {\n",
+                    "  const value_$i: number = x + $i;",
+                    "  return value_0;\n}\n",
+                ),
+                ("//", 2, 36),
+            ),
+            (
+                "/workspace/src/demo.go",
+                source(
+                    "package main\n\nfunc build(x int) int {\n",
+                    "    value$i := x + $i",
+                    "    return value0\n}\n",
+                ),
+                ("//", 4, 36),
+            ),
+            (
+                "/workspace/src/demo.rs",
+                source(
+                    "fn build(x: usize) -> usize {\n",
+                    "    let value_$i = x + $i;",
+                    "    value_0\n}\n",
+                ),
+                ("//", 2, 36),
+            ),
+            (
+                "/workspace/src/Demo.java",
+                source(
+                    "public class Demo {\n    public int build(int x) {\n",
+                    "        int value$i = x + $i;",
+                    "        return value0;\n    }\n}\n",
+                ),
+                ("//", 3, 36),
+            ),
+            (
+                "/workspace/src/demo.c",
+                source(
+                    "int build(int x) {\n",
+                    "    int value$i = x + $i;",
+                    "    return value0;\n}\n",
+                ),
+                ("//", 2, 36),
+            ),
+            (
+                "/workspace/src/demo.cpp",
+                source(
+                    "int build(int x) {\n",
+                    "    int value$i = x + $i;",
+                    "    return value0;\n}\n",
+                ),
+                ("//", 2, 36),
+            ),
+        ];
+
+        let dir = std::env::temp_dir().join(format!("sift-text-languages-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let store = FileStashStore::new(&dir).unwrap();
+        for (path, text, (comment, start_line, omitted)) in cases {
+            let result = compress_text_with_source_path(&text, Some(&store), None, Some(path));
+            assert!(result.changed, "{path} 应进入源码压缩路径");
+            let stash_path = store
+                .file_path(result.stash_key.as_deref().unwrap())
+                .unwrap();
+            let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
+            assert!(
+                result.text.contains(&format!(
+                    "{comment} ... {omitted} lines omitted from file {stash_path}, starting at line {start_line}"
+                )),
+                "path={path}\n{}",
+                result.text
+            );
+        }
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn source_without_path_uses_stash_file_at_each_fold() {
+        let mut text = String::from("function resolveWorkerPath(): string {\n");
+        for i in 0..18 {
+            text.push_str(&format!(
+                "  const candidate_{i} = resolve(process.cwd(), 'worker-{i}.js');\n"
+            ));
+        }
+        text.push_str("  return candidate_0;\n}\n");
+
+        let dir = std::env::temp_dir().join(format!("sift-text-stash-path-{}", std::process::id()));
+        let store = FileStashStore::new(&dir).unwrap();
+        let result = compress_text(&text, Some(&store), None);
+        let key = crate::stash::compute_key(&text);
+        let stash_path = store.file_path(&key).unwrap();
+        let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
+
+        assert!(
+            result.changed,
+            "无 sourcePath 的 TypeScript 也应进入源码压缩"
+        );
+        assert!(result.lossy);
+        assert_eq!(result.stash_key.as_deref(), Some(key.as_str()));
+        assert!(
+            result.text.contains(&format!(
+                "// ... 19 lines omitted from file {stash_path}, starting at line 2"
+            )),
+            "{}",
+            result.text
+        );
+        assert!(result.text.ends_with(&format!("<<stash:{key}>>")));
+
+        let slice = store.get_lines(&key, 2, 19).unwrap();
+        assert_eq!(slice.line_count, 19);
+        assert!(slice.text.starts_with("  const candidate_0"));
+        assert!(slice.text.ends_with("  return candidate_0;\n"));
+        std::fs::remove_dir_all(dir).ok();
     }
 }

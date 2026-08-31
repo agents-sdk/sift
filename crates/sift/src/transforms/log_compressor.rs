@@ -18,9 +18,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::stash;
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
+use crate::stash;
+use crate::transforms::{
+    CompressionContext, OffloadOutput, OffloadTransform, OmissionRange, TransformError,
+};
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────
 
@@ -130,6 +132,7 @@ pub struct LogCompressorConfig {
     pub max_warnings: usize,
     pub dedupe_warnings: bool,
     pub keep_summary_lines: bool,
+    /// 普通诊断行预算；首行和命令上下文不受此上限裁剪。
     pub max_total_lines: usize,
     /// 是否输出 stash 取回标记（需要调用 `compress_with_store` 传入 store）。
     pub enable_stash: bool,
@@ -178,6 +181,8 @@ pub struct LogCompressionResult {
     pub compression_ratio: f64,
     pub cache_key: Option<String>,
     pub stats: BTreeMap<String, u64>,
+    /// 被丢弃的 stash 原文连续行范围（1-based）。
+    pub omissions: Vec<OmissionRange>,
 }
 
 impl LogCompressionResult {
@@ -294,15 +299,11 @@ impl LevelClassifier {
             ),
             (
                 LogLevel::Fail,
-                vec![
-                    "FAILED", "failed", "Failed", "FAIL", "fail", "Fail",
-                ],
+                vec!["FAILED", "failed", "Failed", "FAIL", "fail", "Fail"],
             ),
             (
                 LogLevel::Warn,
-                vec![
-                    "WARNING", "warning", "Warning", "WARN", "warn", "Warn",
-                ],
+                vec!["WARNING", "warning", "Warning", "WARN", "warn", "Warn"],
             ),
             (LogLevel::Info, vec!["INFO", "info", "Info"]),
             (LogLevel::Debug, vec!["DEBUG", "debug", "Debug"]),
@@ -850,6 +851,7 @@ impl LogCompressor {
                     compression_ratio: 1.0,
                     cache_key: None,
                     stats: BTreeMap::new(),
+                    omissions: Vec::new(),
                 },
                 stats,
             );
@@ -860,6 +862,8 @@ impl LogCompressor {
 
         let log_lines = self.parse_lines(&lines);
         let selected = self.select_lines(&log_lines, bias, &mut stats);
+        let logical_line_count = content.split_inclusive('\n').count();
+        let mut omissions = omitted_ranges(&selected, logical_line_count);
 
         let (compressed_body, output_stats) = self.format_output(&selected, &log_lines);
         let mut compressed = compressed_body;
@@ -888,6 +892,7 @@ impl LogCompressor {
                     // 不能返回一个无 marker、不可恢复的有损日志。
                     compressed = content.to_string();
                     compressed_line_count = original_line_count;
+                    omissions.clear();
                 }
             } else {
                 stats.stash_skip_reason = Some("no store provided");
@@ -906,6 +911,7 @@ impl LogCompressor {
             compression_ratio: final_ratio,
             cache_key,
             stats: output_stats,
+            omissions,
         };
         (result, stats)
     }
@@ -976,6 +982,11 @@ impl LogCompressor {
         stats: &mut LogCompressorStats,
     ) -> Vec<LogLine> {
         let adaptive_max = self.adaptive_budget(log_lines.len(), bias);
+        let contents: Vec<_> = log_lines.iter().map(|line| line.content.as_str()).collect();
+        let protected: BTreeSet<LogLine> = super::log_context::protected_lines(&contents)
+            .into_iter()
+            .map(|i| log_lines[i].clone())
+            .collect();
 
         let mut errors: Vec<LogLine> = Vec::new();
         let mut fails: Vec<LogLine> = Vec::new();
@@ -1006,7 +1017,7 @@ impl LogCompressor {
         stats.stack_traces_seen = stack_traces.len();
 
         // BTreeSet 按 line_number 排序，天然得到行号有序输出
-        let mut selected: BTreeSet<LogLine> = BTreeSet::new();
+        let mut selected = protected.clone();
 
         for line in self.select_with_first_last(&errors, self.config.max_errors) {
             selected.insert(line);
@@ -1081,7 +1092,8 @@ impl LogCompressor {
             }
         }
 
-        let mut ordered: Vec<LogLine> = selected.into_iter().collect();
+        // 命令上下文不参与去重或全局预算竞争；避免加了分仍被截断，或挤掉错误行。
+        let mut ordered: Vec<LogLine> = selected.difference(&protected).cloned().collect();
         if ordered.len() > adaptive_max {
             stats.lines_dropped_by_global_cap += ordered.len() - adaptive_max;
             // 按分数降序取前 adaptive_max，再恢复行序
@@ -1092,8 +1104,9 @@ impl LogCompressor {
                     .then_with(|| a.line_number.cmp(&b.line_number))
             });
             ordered.truncate(adaptive_max);
-            ordered.sort_by_key(|l| l.line_number);
         }
+        ordered.extend(protected);
+        ordered.sort_by_key(|l| l.line_number);
         ordered
     }
 
@@ -1203,6 +1216,32 @@ impl LogCompressor {
         }
         (output.join("\n"), stats)
     }
+}
+
+/// 对已保留行求补集，并把相邻的被丢弃行合并成连续区间。
+fn omitted_ranges(selected: &[LogLine], logical_line_count: usize) -> Vec<OmissionRange> {
+    let kept: BTreeSet<usize> = selected.iter().map(|line| line.line_number).collect();
+    let mut ranges = Vec::new();
+    let mut start = None;
+    for idx in 0..logical_line_count {
+        if kept.contains(&idx) {
+            if let Some(first) = start.take() {
+                ranges.push(OmissionRange {
+                    start_line: first + 1,
+                    line_count: idx - first,
+                });
+            }
+        } else if start.is_none() {
+            start = Some(idx);
+        }
+    }
+    if let Some(first) = start {
+        ranges.push(OmissionRange {
+            start_line: first + 1,
+            line_count: logical_line_count - first,
+        });
+    }
+    ranges
 }
 
 fn count_level(lines: &[LogLine], level: LogLevel) -> u64 {
@@ -1351,16 +1390,41 @@ impl OffloadTransform for LogCompressor {
     fn apply(
         &self,
         input: &str,
-        _ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
+        ctx: &CompressionContext,
+    ) -> Result<OffloadOutput, TransformError> {
+        if let Some(path) =
+            super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref())
+        {
+            let lines: Vec<_> = input.split('\n').collect();
+            if lines.len() < self.config.min_lines_for_stash {
+                return Err(TransformError::Skipped);
+            }
+            let parsed = self.parse_lines(&lines);
+            let selected = self.select_lines(&parsed, 1.0, &mut LogCompressorStats::default());
+            // 折叠帧生成的合成 marker 不算原文保留行，由统一的连续行提示替代。
+            let kept = selected
+                .iter()
+                .filter(|line| lines.get(line.line_number) == Some(&line.content.as_str()))
+                .map(|line| line.line_number);
+            return Ok(super::line_omissions::render(
+                input,
+                kept,
+                path,
+                ctx.stash_line_offset,
+            ));
+        }
         let (result, _) = self.compress(input, 1.0);
         if result.original_line_count < self.config.min_lines_for_stash
             && result.compressed != input
         {
             return Err(TransformError::Internal("short log changed".into()));
         }
-        // 返回 (压缩输出, 原文)：调用方把原文写入 stash store 完成卸载
-        Ok((result.compressed, input.to_string()))
+        // 返回结构化卸载结果：调用方把原文写入 stash store 完成卸载
+        Ok(OffloadOutput {
+            compressed: result.compressed,
+            original: input.to_string(),
+            omissions: result.omissions,
+        })
     }
 }
 
@@ -1369,7 +1433,7 @@ impl OffloadTransform for LogCompressor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stash::{StashStore, InMemoryStashStore};
+    use crate::stash::{InMemoryStashStore, StashStore};
 
     struct FailingStore;
 
@@ -1438,7 +1502,8 @@ mod tests {
 
     #[test]
     fn level_classifier_word_boundary_matches() {
-        let lines = cmp().parse_lines(&["ERROR: critical", "warning: x", "INFO: x", "no level here"]);
+        let lines =
+            cmp().parse_lines(&["ERROR: critical", "warning: x", "INFO: x", "no level here"]);
         assert_eq!(lines[0].level, LogLevel::Error);
         assert_eq!(lines[1].level, LogLevel::Warn);
         assert_eq!(lines[2].level, LogLevel::Info);
@@ -1763,6 +1828,24 @@ mod tests {
     }
 
     #[test]
+    fn omitted_ranges_are_exact_and_coalesced() {
+        let selected = vec![LogLine::new(0, "first"), LogLine::new(4, "fifth")];
+        assert_eq!(
+            omitted_ranges(&selected, 6),
+            vec![
+                OmissionRange {
+                    start_line: 2,
+                    line_count: 3,
+                },
+                OmissionRange {
+                    start_line: 6,
+                    line_count: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn score_line_caps_at_one_point_zero() {
         let line = LogLine {
             line_number: 0,
@@ -1844,9 +1927,10 @@ mod tests {
         }
         content.push_str("ERROR boom\n");
         let ctx = CompressionContext::default();
-        let (compressed, original) = c.apply(&content, &ctx).unwrap();
-        assert_eq!(original, content);
-        assert!(compressed.len() < content.len());
+        let result = c.apply(&content, &ctx).unwrap();
+        assert_eq!(result.original, content);
+        assert!(result.compressed.len() < content.len());
+        assert!(!result.omissions.is_empty());
         assert_eq!(c.estimate_bloat("short"), 0.0);
         assert_eq!(c.name(), "log_compressor");
         assert_eq!(c.applies_to(), ContentType::BuildOutput);

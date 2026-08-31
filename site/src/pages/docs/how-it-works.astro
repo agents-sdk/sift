@@ -37,23 +37,27 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
       <tr><td>git_diff</td><td>DiffCompressor</td><td>unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
-      <tr><td>plain_text</td><td>TextCrusher</td><td>BM25 相关性 + 近重复折叠,支持中英文(CJK)</td><td>有损(可恢复)</td></tr>
+      <tr><td>plain_text</td><td>TextCrusher</td><td>完整段落/发言块保守去重,同章节完全相同的块保留首份</td><td>有损(可恢复)</td></tr>
       <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,签名保留、函数体折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>html</td><td>—</td><td>检测支持,压缩当前 no-op</td><td>—</td></tr>
     </table>
 
     <h3>共用机制</h3>
     <ul>
-      <li><strong>相关性 query</strong>:有损压缩器用 BM25 对行打分,与 query 相关的内容优先保留。</li>
+      <li><strong>相关性 query</strong>:支持相关性筛选的压缩器优先保留相关内容;纯文本默认不按 query 或目标比例删除独有内容。</li>
+      <li><strong>纯文本保守去重</strong>:不把相似句式当成重复,不同编号、数字、状态或发言人的块完整保留。标题、代码围栏、可识别的命令和结论块保留;没有明确重复或提示抵消收益时原样返回。省略重复次数和位置仍是有损操作,需通过 stash 恢复。</li>
       <li><strong>保密检测</strong>:归一化 Shannon 熵 ≥0.85 且长度 ≥20 的片段(API key、凭证)强制不可丢弃。</li>
       <li><strong>标签保护</strong>:自定义 XML 标签先占位保护、压缩后恢复,不会被压坏。</li>
       <li><strong>混合内容</strong>同一 block 内含多种类型时,分段路由到各自的压缩器;嵌入的 JSON span 走递归平衡匹配。</li>
-      <li><strong>stash 恢复</strong>:一切有损输出的原文都在 stash store,输出留 <code>«stash:HASH»</code> 标记,<code>retrieve(key)</code> 取回。</li>
+      <li><strong>日志执行上下文</strong>:首个非空行、可识别的命令回显及显式续行强制可见,不参与模板化、去重或普通日志行数预算竞争;省略提示不能代替命令本身。</li>
+      <li><strong>stash 恢复</strong>:一切有损输出的原文都在 stash store,输出留 <code>«stash:HASH»</code> 标记;<code>retrieve(key)</code> 取回全文,<code>retrieveLines(key, startLine, lineCount)</code> 按行取回分片。</li>
+      <li><strong>内联切片提示</strong>:本地落盘模式下,源码、搜索、日志、diff 和整行纯文本共用省略提示,就地写入 stash 绝对文件路径、省略行数和 1-based 起始行。搜索和 diff 在解析时保留输入坐标,输出按原序回放;可验证的混合整行分段累加偏移。无损重排收益不足时,有损阶段使用原文视图以避免坐标漂移。短空隙不值得添加提示时直接保留。JSON 结构采样、行内片段、tag protect 改变映射、内存/远程 stash 等情况暂不标注。</li>
     </ul>
 
     <h2>走一个真实例子</h2>
     <p>假设一段工具输出(tool_result)里有 2000 行构建日志,sift 会这样处理它:</p>
     <CodeBlock code={`输入(节选):
+  $ npm run build
   [vite] building for production...
   ✓ 1420 modules transformed.
   warning: chunk size exceeds 500 kB (vendor.js)
@@ -65,15 +69,17 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
 处理过程:
   1. detectContentType → build_output → 路由到 LogCompressor
   2. 先试无损(Drain 模板化)→ 仍 >80%,进入有损
-  3. 错误行 / 堆栈行 全部保留;47 条同类 warning 折成 1 条模板
-  4. 原文写入 stash store,压缩处留 «stash:a3f9…» 标记
+  3. 优先保留错误 / 堆栈行;抽稀同类 warning
+  4. 原文写入 stash 文件,每段省略位置附行坐标,末尾留恢复标记
 
 输出(节选):
+  $ npm run build
   ✓ 1420 modules transformed.
-  warning: chunk size exceeds 500 kB — 重复 47 次(vendor/utils/ui/…)
+  warning: chunk size exceeds 500 kB (vendor.js)
+  [... 46 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 5]
   ERROR in src/api/client.ts:52
   TS2339: Property 'retry' does not exist on type 'Client'.`} lang="text" />
-    <p>关键在于:模型看到的错误信息一字不差,被折叠的只是重复噪音;任何时候需要完整原文,都能用 stash 标记取回。其他内容类型同理 —— diff 保留改动行、代码保留函数签名、搜索结果保留匹配上下文,牺牲的永远是「重复」,不是「信息」。</p>
+    <p>提示中的行号始终对应 stash 文件。需要局部原文时,Agent 可直接分片读文件;需要全文时,仍可使用末尾的 stash 标记恢复。有损抽稀可能省略低相关内容,不会把这种省略冒充无损重排。</p>
 
     <h2>设计取舍</h2>
     <ul>

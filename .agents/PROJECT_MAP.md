@@ -27,11 +27,14 @@ crates/
       signals.rs          # 行重要性信号（LineImportanceDetector + Tiered）
       transforms/
         mod.rs            # ReformatTransform / OffloadTransform traits + dispatch
+        line_omissions.rs # 按原始行坐标渲染共享内联提示，短空隙保留，分段行偏移换算
+        log_context.rs    # 日志首行/命令回显/显式续行保护，模板化与有损选择共用
         smart_crusher.rs  # JSON 数组统计压缩（schema 去重/采样/关键行保留）
         log_compressor.rs # 构建/测试日志压缩（错误/堆栈/摘要保留）
         search_compressor.rs # grep/ripgrep 搜索结果抽稀
         diff_compressor.rs   # unified diff hunk 采样
-        text_crusher.rs   # 纯文本抽取式压缩（BM25 + 近重复折叠，含 CJK）
+        text_crusher.rs   # 默认完整块去重；旧 BM25 抽取仅 Rust 显式 conservative=false 启用
+        text_blocks.rs    # 保守段落/发言分块，同章节完全相同块保留首份，输出原文行坐标
         code_compressor.rs   # tree-sitter AST 代码压缩（8 语言，函数体折叠）
         tag_protector.rs  # 自定义 XML 标签保护/恢复（压缩前 protect 后 restore）
         reformats.rs      # 无损重排：JsonMinifier + LogTemplate（Drain 模板）
@@ -86,8 +89,12 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 
 - `siftRequest(body, query?) -> { body, changed, blocksExamined, blocksCompressed, blocksReverted, frozenMessages, stashStored, tokensSaved }`
   （自动检测格式：Anthropic /v1/messages、OpenAI Chat Completions、OpenAI Responses API）
-- `siftText(text, query?) -> { text, changed, lossy, stashKey, tokensSaved }`（单条字符串压缩）
+- `siftText(text, query?, sourcePath?) -> { text, changed, lossy, stashKey, tokensSaved }`
+  （单条字符串压缩；FileStashStore 下源码、搜索、日志、diff、整行纯文本的省略点内联 stash 绝对文件路径、省略行数和
+  1-based 起始行；可选 sourcePath 的扩展名用于选择 8 种 grammar）
 - `retrieve(key) -> string | null`（按 `<<stash:KEY>>` 取回压缩时卸载的原文）
+- `retrieveLines(key, startLine, lineCount) -> { text, startLine, lineCount, totalLines, hasMore } | null`
+  （按 stash 原文的 1-based 行号分片读取，单次最多 1000 行）
 - `createSift({ stashDir }) -> Sift`（创建绑定到独立 stash 目录的同构 API 实例；顶层 API
   仍按 `SIFT_STASH_DIR` / `~/.sift/stash` 使用全局 store）
 - `detectContentType(text) -> 'json_array' | 'build_output' | ...`
@@ -110,16 +117,24 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
          └ 缩到 ≤80% 体积即短路——不写 stash、无标记、可完全重建
       2. 整块检测 → compressor_for
           JsonArray     → smart_crusher
-          BuildOutput   → log_compressor
+         BuildOutput   → log_compressor
+                         （首个非空行、可识别命令及续行强制保留，不受普通行数预算截断或模板化）
           SearchResults → search_compressor
           GitDiff       → diff_compressor
           PlainText     → 先试混合内容路由，无收益再 text_crusher
+                          （默认只折叠同章节完全相同的完整块；不按 query/预算删独有内容。
+                           不同编号/数字/状态/发言人不合并，标题/围栏/命令/结论块保留。
+                           npm 使用此默认策略；Rust 可显式 conservative=false 启用旧评分策略）
           SourceCode    → code_compressor（tree-sitter 8 语言）
           Html          → no-op
          混合内容路由（整块落 PlainText 时）：
            mixed_content::split_into_sections → 逐段独立分发压缩
            + recursive_json::replace_json_spans（段内嵌入 JSON span 平衡匹配替换）
-      3. tag_protector::restore + 追加 <<stash:HASH>> 标记
+      3. 落盘模式有损阶段使用原文视图，避免沿用 reformat 后的坐标；源码、搜索、日志、diff、
+         整行纯文本在省略点内联 stash 绝对文件路径、省略行数和 1-based 起始行。
+         搜索/diff 在解析时记录输入行号，按原序回放；短空隙保留，可验证整行混合分段累加行偏移。
+         tag_protector::restore 后追加 <<stash:HASH>>。JSON 结构采样、行内片段、标签映射变化、
+         内存/远程 store 暂不输出行片段文件提示；不猜测行号或伪造路径
       4. tokenizer 校验最终文本（含 marker；token ≥ 原值则回退）
       5. 原文确认写入 stash store 后才发布有损结果；写入失败原样回退
          （text_crusher 段落选择含 secrets 熵保密：API key 段强制保留）

@@ -2,8 +2,10 @@
 // 产出 site/src/data/samples.json(离线运行,站点本身零后端依赖)。
 //
 // 用法:node scripts/gen-demo-samples.mjs  (或 cd site && npm run gen:samples)
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isAbsolute } from 'node:path';
+import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { siftText, detectContentType } from '../site/vendor/sift/dist/index.js';
 
@@ -114,152 +116,24 @@ function diffSample() {
 
 // Java Spring Service:AST 感知压缩(imports/类/方法签名保留,长方法体折叠)
 function sourceCodeSample() {
-  const lines = [
-    'package com.example.orders.service;',
-    '',
-    'import com.example.orders.model.Order;',
-    'import com.example.orders.model.OrderStatus;',
-    'import com.example.orders.repo.OrderRepository;',
-    'import com.example.orders.exception.OrderNotFoundException;',
-    'import org.springframework.stereotype.Service;',
-    'import org.springframework.transaction.annotation.Transactional;',
-    'import java.math.BigDecimal;',
-    'import java.time.Instant;',
-    'import java.util.List;',
-    'import java.util.stream.Collectors;',
-    '',
-    '/** 订单服务:负责订单生命周期管理与查询。 */',
-    '@Service',
-    'public class OrderService {',
-    '',
-    '    private final OrderRepository orderRepository;',
-    '    private final PaymentGateway paymentGateway;',
-    '    private final NotificationClient notificationClient;',
-    '',
-    '    public OrderService(OrderRepository orderRepository,',
-    '                        PaymentGateway paymentGateway,',
-    '                        NotificationClient notificationClient) {',
-    '        this.orderRepository = orderRepository;',
-    '        this.paymentGateway = paymentGateway;',
-    '        this.notificationClient = notificationClient;',
-    '    }',
-    '',
-    '    @Transactional',
-    '    public Order createOrder(CreateOrderRequest request) {',
-    '        validate(request);',
-    '        Order order = new Order();',
-    '        order.setUserId(request.getUserId());',
-    '        order.setItems(request.getItems());',
-    '        order.setAmount(request.getItems().stream()',
-    '                .map(i -> i.getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))',
-    '                .reduce(BigDecimal.ZERO, BigDecimal::add));',
-    '        order.setStatus(OrderStatus.PENDING);',
-    '        order.setCreatedAt(Instant.now());',
-    '        Order saved = orderRepository.save(order);',
-    '        try {',
-    '            PaymentResult payment = paymentGateway.charge(saved.getAmount(), saved.getUserId());',
-    '            if (!payment.isSuccess()) {',
-    '                saved.setStatus(OrderStatus.PAYMENT_FAILED);',
-    '                orderRepository.save(saved);',
-    '                notificationClient.notify(saved.getUserId(), "支付失败,订单已保留");',
-    '                return saved;',
-    '            }',
-    '            saved.setStatus(OrderStatus.PAID);',
-    '            saved.setPaymentId(payment.getPaymentId());',
-    '            orderRepository.save(saved);',
-    '        } catch (PaymentGatewayException e) {',
-    '            saved.setStatus(OrderStatus.PAYMENT_ERROR);',
-    '            orderRepository.save(saved);',
-    '            throw e;',
-    '        }',
-    '        notificationClient.notify(saved.getUserId(), "下单成功");',
-    '        auditLog.record("order.created", saved.getId());',
-    '        metrics.increment("orders.created");',
-    '        return saved;',
-    '    }',
-    '',
-    '    @Transactional(readOnly = true)',
-    '    public Order findById(Long id) {',
-    '        return orderRepository.findById(id)',
-    '                .orElseThrow(() -> new OrderNotFoundException(id));',
-    '    }',
-    '',
-    '    @Transactional(readOnly = true)',
-    '    public List<OrderSummary> listByUser(Long userId, int page, int size) {',
-    '        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId)',
-    '                .stream()',
-    '                .skip((long) page * size)',
-    '                .limit(size)',
-    '                .map(OrderSummary::from)',
-    '                .collect(Collectors.toList());',
-    '    }',
-    '',
-    '    @Transactional',
-    '    public void cancelOrder(Long id, String reason) {',
-    '        Order order = findById(id);',
-    '        if (order.getStatus() == OrderStatus.SHIPPED) {',
-    '            throw new IllegalStateException("已发货订单不可取消");',
-    '        }',
-    '        if (order.getStatus() == OrderStatus.CANCELLED) {',
-    '            return;',
-    '        }',
-    '        order.setStatus(OrderStatus.CANCELLED);',
-    '        order.setCancelReason(reason);',
-    '        order.setCancelledAt(Instant.now());',
-    '        orderRepository.save(order);',
-    '        if (order.getPaymentId() != null) {',
-    '            paymentGateway.refund(order.getPaymentId(), order.getAmount());',
-    '        }',
-    '        notificationClient.notify(order.getUserId(), "订单已取消: " + reason);',
-    '        auditLog.record("order.cancelled", id);',
-    '    }',
-    '',
-    '    @Transactional',
-    '    public Order shipOrder(Long id, String trackingNo) {',
-    '        Order order = findById(id);',
-    '        if (order.getStatus() != OrderStatus.PAID) {',
-    '            throw new IllegalStateException("仅已支付订单可发货");',
-    '        }',
-    '        order.setStatus(OrderStatus.SHIPPED);',
-    '        order.setTrackingNo(trackingNo);',
-    '        order.setShippedAt(Instant.now());',
-    '        Order saved = orderRepository.save(order);',
-    '        notificationClient.notify(saved.getUserId(), "已发货,单号 " + trackingNo);',
-    '        metrics.increment("orders.shipped");',
-    '        return saved;',
-    '    }',
-    '',
-    '    private void validate(CreateOrderRequest request) {',
-    '        if (request.getUserId() == null) {',
-    '            throw new IllegalArgumentException("userId 不能为空");',
-    '        }',
-    '        if (request.getItems() == null || request.getItems().isEmpty()) {',
-    '            throw new IllegalArgumentException("订单项不能为空");',
-    '        }',
-    '        for (Item item : request.getItems()) {',
-    '            if (item.getQuantity() <= 0) {',
-    '                throw new IllegalArgumentException("数量必须为正数");',
-    '            }',
-    '        }',
-    '    }',
-    '}',
-  ];
-  return lines.join('\n');
+  return readFileSync(
+    new URL('../crates/sift/tests/fixtures/order_service.java', import.meta.url),
+    'utf8',
+  ).replace(/\n$/, '');
 }
 
-
 function plainTextSample() {
-  const speakers = ['Alice', 'Bob', 'Carol', 'Dave'];
-  const out = ['周会纪要:上下文压缩项目(2026-08-18)', ''];
-  for (let i = 0; i < 26; i++) {
-    const s = speakers[i % 4];
-    const topic = ['冻结前缀', 'CCR 恢复', 'token 估算', '发布节奏', '文档', '压测'][i % 6];
-    out.push(`${s}:关于${topic},我觉得目前方案整体可以,细节上还有几个点需要确认一下,第一是边界条件,第二是回退路径,第三是和缓存成本的折中。`);
-    out.push(`${s}:另外上次的 action item 我这边已经完成了,详情见 ticket COMP-${100 + i}。`);
-    if (i % 5 === 4) out.push(`${s}:这个问题我们下次会议再深入讨论吧,先把结论记下来:${topic}维持现状。`);
-  }
-  out.push('', '结论:1) 冻结前缀下界算法保持不变;2) CCR store 换成内存 LRU;3) 下周二发布 0.5.0。');
-  return out.join('\n');
+  const broadcast = '例行同步：当前仍在等待依赖团队确认，处理方式保持不变。\n这是一段重复状态播报，没有新的任务、决定或处理结果。';
+  return [
+    '周会纪要：上下文压缩项目（2026-08-18）',
+    '## 项目进展',
+    'Alice: COMP-100 已完成，冻结前缀的边界测试通过。\nAlice: 这项任务可以关闭，但不代表其他任务已经完成。',
+    broadcast, broadcast, broadcast, broadcast,
+    'Bob: COMP-101 未完成，恢复测试有 2 项失败。\nBob: 需要先修复失败用例，不能按已完成处理。',
+    'Carol: COMP-102 已完成，恢复测试有 0 项失败。\nCarol: 和 COMP-101 是不同任务，需要分别保留记录。',
+    '## 发布决定',
+    '结论：冻结前缀算法保持不变；等 COMP-101 修复并验收后再发布。',
+  ].join('\n\n');
 }
 
 // ---------- 元数据 ----------
@@ -269,17 +143,60 @@ const SAMPLES = [
   { type: 'build_output', label: '构建日志', query: 'error mismatched types could not compile', desc: 'cargo/npm 构建输出(错误与堆栈保留,重复 warning 折叠)', make: buildOutputSample },
   { type: 'search_results', label: '搜索结果', query: 'siftText StashStore frozen', desc: 'grep / ripgrep 输出(重复行抽稀,匹配项保留)', make: searchResultsSample },
   { type: 'git_diff', label: 'Git Diff', query: 'new_impl crush', desc: 'unified diff(hunk 采样,改动行保留)', make: diffSample },
-  { type: 'source_code', label: 'Java 源码', query: 'cancel refund 支付', desc: 'AST 感知代码压缩(imports/签名/类型保留,长方法体折叠)', make: sourceCodeSample },
-  { type: 'plain_text', label: '纯文本', query: '结论 冻结前缀 CCR 发布', desc: '中英文抽取式摘要(BM25 相关性 + 近重复折叠)', make: plainTextSample },
+  { type: 'source_code', label: 'Java 源码', query: 'cancel refund 支付', sourcePath: 'src/main/java/com/example/orders/service/OrderService.java', desc: 'AST 感知代码压缩(imports/签名/类型保留,长方法体折叠)', make: sourceCodeSample },
+  { type: 'plain_text', label: '纯文本', query: '', desc: '完整文本块去重：4 次相同播报保留首份，不同任务、状态和结论完整保留', make: plainTextSample },
 ];
 
 // ---------- 生成 ----------
+
+// 在生成环节直接按提示读文件并回填切片，防止官网静态示例落后于实际运行时。
+function validateLineHints(sample, original, result) {
+  if (!result.lossy || sample.type === 'json_array') return;
+  const hintRE = /(\d+) lines omitted from file ("(?:\\.|[^"\\])*"), starting at line (\d+)/g;
+  const hints = [...result.text.matchAll(hintRE)];
+  assert.ok(hints.length, `${sample.label}: 有损样例应显示内联行提示`);
+  const rows = original.split(/\r?\n/);
+  if (original.endsWith('\n')) rows.pop();
+  for (const [, count, quotedPath, start] of hints) {
+    const file = JSON.parse(quotedPath);
+    assert.ok(isAbsolute(file));
+    assert.equal(readFileSync(file, 'utf8'), original, '提示必须指向完整 stash 原文');
+    assert.ok(Number(start) >= 1 && Number(count) > 0 && Number(start) - 1 + Number(count) <= rows.length);
+  }
+  if (sample.type === 'source_code') return; // AST 输出可调整注释/缩进，不按全文逐行回放断言。
+  const body = result.text.replace(/<<stash:[a-f0-9]+>>$/, '');
+  const compressedRows = body.split(/\r?\n/);
+  if (body.endsWith('\n')) compressedRows.pop();
+  const restored = [];
+  for (const row of compressedRows) {
+    const match = /^\[\.\.\. (\d+) lines omitted from file ("(?:\\.|[^"\\])*"), starting at line (\d+)\]$/.exec(row);
+    if (!match) { restored.push(row); continue; }
+    const start = Number(match[3]);
+    assert.equal(start, restored.length + 1, '提示必须就地出现');
+    restored.push(...rows.slice(start - 1, start - 1 + Number(match[1])));
+  }
+  assert.deepEqual(restored, rows, `${sample.label}: 切片回填应逐行重建原文`);
+}
 
 const results = [];
 for (const s of SAMPLES) {
   const original = s.make();
   const detected = detectContentType(original);
-  const r = siftText(original, s.query);
+  const r = siftText(original, s.query, s.sourcePath);
+  if (s.type === 'build_output') {
+    assert.ok(r.text.startsWith('$ cargo build --release --workspace\n'), '构建日志必须首先显示执行命令，不能用 omit 取代');
+    assert.ok(r.text.includes('error[E0308]: mismatched types'), '构建错误必须可见');
+  }
+  if (s.type === 'plain_text') {
+    assert.equal(detected, 'plain_text');
+    assert.ok(r.lossy, '重复完整段落应折叠');
+    assert.ok(r.text.startsWith('周会纪要：'));
+    assert.equal(r.text.split('例行同步：').length - 1, 1, '相同播报只保留首份');
+    for (const fact of ['COMP-100 已完成', 'COMP-101 未完成', '有 2 项失败', 'COMP-102 已完成', '有 0 项失败', '结论：冻结前缀算法保持不变；等 COMP-101 修复并验收后再发布。']) {
+      assert.ok(r.text.includes(fact), `独有事实必须可见: ${fact}`);
+    }
+  }
+  validateLineHints(s, original, r);
   results.push({
     type: s.type,
     label: s.label,
@@ -295,7 +212,7 @@ for (const s of SAMPLES) {
   });
   console.log(
     `${s.label}: detected=${detected} changed=${r.changed} lossy=${r.lossy} saved=${r.tokensSaved} ` +
-      `${original.length}B -> ${r.text.length}B`,
+      `${Buffer.byteLength(original)}B -> ${Buffer.byteLength(r.text)}B`,
   );
 }
 

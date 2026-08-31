@@ -31,9 +31,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::stash;
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
+use crate::stash;
+use crate::transforms::{CompressionContext, OffloadOutput, OffloadTransform, TransformError};
 
 // ─── 类型 ────────────────────────────────────────────────────────────────
 
@@ -45,6 +45,8 @@ pub struct SearchMatch {
     pub content: String,
     /// 相关性得分 [0.0, 1.0]，由 [`SearchCompressor::score_matches`] 填充。
     pub score: f32,
+    /// 当前搜索输出的 0-based 行号，与命中源文件的 line_number 无关。
+    pub input_line: usize,
 }
 
 impl SearchMatch {
@@ -54,6 +56,7 @@ impl SearchMatch {
             line_number,
             content: content.into(),
             score: 0.0,
+            input_line: 0,
         }
     }
 }
@@ -235,9 +238,7 @@ impl SearchCompressor {
                 let key = stash::compute_key(content);
                 let marker = format!(
                     "\n[{} matches compressed to {}. Retrieve more: hash={}]",
-                    original_count,
-                    compressed_count,
-                    key
+                    original_count, compressed_count, key
                 );
                 compressed.push_str(&marker);
                 cache_key = Some(key);
@@ -269,7 +270,7 @@ impl SearchCompressor {
         stats: &mut SearchCompressorStats,
     ) -> BTreeMap<String, FileMatches> {
         let mut out: BTreeMap<String, FileMatches> = BTreeMap::new();
-        for raw in content.split('\n') {
+        for (input_line, raw) in content.split('\n').enumerate() {
             let line = raw.trim();
             if line.is_empty() {
                 continue;
@@ -277,10 +278,12 @@ impl SearchCompressor {
             stats.lines_scanned += 1;
             match parse_match_line(line) {
                 Some((file, line_no, body)) => {
+                    let mut entry = SearchMatch::new(file, line_no, body);
+                    entry.input_line = input_line;
                     out.entry(file.to_string())
                         .or_insert_with(|| FileMatches::new(file))
                         .matches
-                        .push(SearchMatch::new(file, line_no, body));
+                        .push(entry);
                 }
                 None => stats.lines_unparsed += 1,
             }
@@ -393,8 +396,8 @@ impl SearchCompressor {
                 .min(adaptive_total.saturating_sub(total_selected));
 
             let push_unique = |m: &SearchMatch,
-                                file_selected: &mut Vec<SearchMatch>,
-                                seen: &mut BTreeSet<(u64, u64)>| {
+                               file_selected: &mut Vec<SearchMatch>,
+                               seen: &mut BTreeSet<(u64, u64)>| {
                 let key = (m.line_number, hash_u64(&m.content));
                 if seen.insert(key) {
                     file_selected.push(m.clone());
@@ -730,7 +733,7 @@ fn hash_u64(s: &str) -> u64 {
 // ─── OffloadTransform 适配 ───────────────────────────────────────────────
 
 /// `OffloadTransform` 适配器：路由层按 `ContentType::SearchResults` 分发。
-/// apply 返回 (压缩文本, 原文)，由调用方把原文写入 stash store。
+/// apply 返回结构化卸载结果，由调用方把原文写入 stash store。
 pub struct SearchCompressorTransform {
     compressor: SearchCompressor,
 }
@@ -779,10 +782,37 @@ impl OffloadTransform for SearchCompressorTransform {
         &self,
         input: &str,
         ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
+    ) -> Result<OffloadOutput, TransformError> {
         let context = ctx.query.as_deref().unwrap_or("");
+        if let Some(path) =
+            super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref())
+        {
+            let mut stats = SearchCompressorStats::default();
+            let mut parsed = self.compressor.parse_search_results(input, &mut stats);
+            if parsed.is_empty() {
+                return Err(TransformError::Skipped);
+            }
+            self.compressor.score_matches(&mut parsed, context);
+            let selected = self.compressor.select_matches(&parsed, 1.0, &mut stats);
+            let mut kept: BTreeSet<usize> = selected
+                .values()
+                .flat_map(|f| f.matches.iter().map(|m| m.input_line))
+                .collect();
+            // 命令回显、标题等未解析行原样保留；不把它们误当作搜索命中删除。
+            for (i, line) in input.lines().enumerate() {
+                if parse_match_line(line.trim()).is_none() {
+                    kept.insert(i);
+                }
+            }
+            return Ok(super::line_omissions::render(
+                input,
+                kept,
+                path,
+                ctx.stash_line_offset,
+            ));
+        }
         let (result, _) = self.compressor.compress(input, context, 1.0);
-        Ok((result.compressed, result.original))
+        Ok(OffloadOutput::new(result.compressed, result.original))
     }
 }
 
@@ -852,11 +882,7 @@ mod tests {
         );
         assert_eq!(
             parse_line("advisories/CVE-2021-44228.md:8:Log4Shell"),
-            Some((
-                "advisories/CVE-2021-44228.md".into(),
-                8,
-                "Log4Shell".into()
-            ))
+            Some(("advisories/CVE-2021-44228.md".into(), 8, "Log4Shell".into()))
         );
     }
 
@@ -1013,7 +1039,8 @@ src/main.py-44-context line";
         let mut files = BTreeMap::new();
         let mut fm = FileMatches::new("a.py");
         for i in 1..=8 {
-            fm.matches.push(SearchMatch::new("a.py", i, format!("l{i}")));
+            fm.matches
+                .push(SearchMatch::new("a.py", i, format!("l{i}")));
         }
         files.insert("a.py".into(), fm);
 
@@ -1074,8 +1101,12 @@ src/main.py-44-context line";
 
         assert_eq!(result.original_match_count, 10);
         // 每文件被抽到 2 条 + 各一条汇总行。
-        assert!(result.compressed.contains("[... and 4 more matches in src/a.py]"));
-        assert!(result.compressed.contains("[... and 2 more matches in src/b.py]"));
+        assert!(result
+            .compressed
+            .contains("[... and 4 more matches in src/a.py]"));
+        assert!(result
+            .compressed
+            .contains("[... and 2 more matches in src/b.py]"));
         assert_eq!(result.summaries.len(), 2);
         assert!(result.compressed.len() < result.original.len());
         assert!(result.compression_ratio < 1.0);
@@ -1193,14 +1224,19 @@ src/main.py-44-context line";
         let ctx = CompressionContext {
             query: Some("content".into()),
             token_budget: None,
+            source_path: None,
+            stash_file_path: None,
+            stash_line_offset: 0,
         };
-        let (compressed, original) = t.apply(&content, &ctx).unwrap();
-        assert_eq!(original, content); // 原文完整返回供卸载
-        assert!(compressed.len() < content.len());
-        assert!(compressed.contains("[... and 8 more matches in src/m.py]"));
+        let result = t.apply(&content, &ctx).unwrap();
+        assert_eq!(result.original, content); // 原文完整返回供卸载
+        assert!(result.compressed.len() < content.len());
+        assert!(result
+            .compressed
+            .contains("[... and 8 more matches in src/m.py]"));
 
         // 空 query 也能工作。
-        let (c2, _) = t.apply(&content, &CompressionContext::default()).unwrap();
-        assert!(c2.len() < content.len());
+        let result = t.apply(&content, &CompressionContext::default()).unwrap();
+        assert!(result.compressed.len() < content.len());
     }
 }

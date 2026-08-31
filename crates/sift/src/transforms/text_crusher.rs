@@ -1,8 +1,11 @@
-//! TextCrusher：纯文本的抽取式有损压缩（request-path 安全的非 ml 方案）。
+//! TextCrusher：默认保守的完整文本块去重；原文经 stash 恢复。
 
 //!
 //! # 算法
 //!
+//! 默认策略只折叠同章节内完整相同的段落/发言块，保留第一份及全部独有内容。
+//! 不按 query、位置或预算删独有事实，具体分块规则在 text_blocks 模块。
+//! 以下评分算法仅用于 Rust 调用方显式设置 `conservative: false` 的旧策略：
 //! 把纯文本切分为「段落 / 句子」段，对每段用三因子打分：
 //!
 //! 1. **recency**：越靠后的段落权重越高（`(i+1)/n`）；
@@ -36,16 +39,17 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use crate::stash;
 use crate::content::ContentType;
-use crate::transforms::{CompressionContext, OffloadTransform, TransformError};
-
+use crate::stash;
+use crate::transforms::{CompressionContext, OffloadOutput, OffloadTransform, TransformError};
 
 // ────────────────────────────── 配置 ──────────────────────────────
 
-/// TextCrusher 配置（对应参考 `TextCrusherConfig`，默认值逐项一致）。
+/// TextCrusher 配置：默认完整块去重，其余评分/预算字段仅在 conservative=false 时生效。
 #[derive(Debug, Clone)]
 pub struct TextCrusherConfig {
+    /// 默认只去重完整相同块。设 false 才启用旧的激进评分抽取；npm 不暴露此开关。
+    pub conservative: bool,
     /// 大致保留的字符比例（0.0-1.0）。
     pub target_ratio: f64,
     /// recency 项权重。
@@ -67,8 +71,9 @@ pub struct TextCrusherConfig {
 
 impl Default for TextCrusherConfig {
     fn default() -> Self {
-        // 默认值与参考实现 `TextCrusherConfig::default()` 对齐。
+        // 旧评分策略的参数保持兼容；默认改用保守策略。
         TextCrusherConfig {
+            conservative: true,
             target_ratio: 0.5,
             w_recency: 1.0,
             w_relevance: 2.0,
@@ -94,6 +99,8 @@ pub struct TextCrusherResult {
     pub compression_ratio: f64,
     pub kept_segments: usize,
     pub total_segments: usize,
+    /// 保留块/句子所在的原文行（0-based）；用于生成准确的文件行提示。
+    pub kept_lines: Vec<usize>,
 }
 
 // ────────────────────────────── 压缩器 ──────────────────────────────
@@ -129,7 +136,7 @@ impl TextCrusher {
         )
     }
 
-    /// 压缩入口（显式给定保留比例与 token 上限）。
+    /// 压缩入口（比例与 token 上限仅用于显式启用的旧评分策略）。
     pub fn compress_with(
         &self,
         content: &str,
@@ -137,10 +144,54 @@ impl TextCrusher {
         target_ratio: f64,
         max_tokens: Option<usize>,
     ) -> TextCrusherResult {
+        self.compress_with_segments(content, context, target_ratio, max_tokens, false)
+    }
+
+    /// 默认保留完整块；旧策略的文件模式以整行为评分/抽取单位。
+    fn compress_with_segments(
+        &self,
+        content: &str,
+        context: &str,
+        target_ratio: f64,
+        max_tokens: Option<usize>,
+        whole_lines: bool,
+    ) -> TextCrusherResult {
+        if self.config.conservative {
+            let selection = super::text_blocks::select(content);
+            let original_tokens = count_tokens(content);
+            let compressed_tokens = count_tokens(&selection.compressed);
+            return TextCrusherResult {
+                compression_ratio: if original_tokens == 0 {
+                    1.0
+                } else {
+                    compressed_tokens as f64 / original_tokens as f64
+                },
+                compressed: selection.compressed,
+                original_tokens,
+                compressed_tokens,
+                kept_segments: selection.kept_blocks,
+                total_segments: selection.total_blocks,
+                kept_lines: selection.kept_lines,
+            };
+        }
         let cfg = &self.config;
         let ratio = target_ratio.clamp(0.05, 1.0);
 
-        let segments = split_segments(content);
+        let mut segment_lines = Vec::new();
+        let mut segments = Vec::new();
+        for (line_number, line) in content.split('\n').enumerate() {
+            let parts = if whole_lines {
+                if line.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![line.trim().to_owned()]
+                }
+            } else {
+                split_segments(line)
+            };
+            segment_lines.extend(std::iter::repeat(line_number).take(parts.len()));
+            segments.extend(parts);
+        }
         if segments.len() < cfg.min_segments_for_crush {
             return passthrough(content, segments.len());
         }
@@ -186,12 +237,10 @@ impl TextCrusher {
         let mut kept_tokens = 0usize;
         let mut kept_count = 0usize;
 
-        // 保密保底：段内任一空白切分 token 命中熵检测（`is_secret_like`）
-        // → 该段强制
-        // 保留（pinned），不可因低分 / 预算 / 近重复被丢弃。凭证不可重建，
-        // 有损压缩丢弃即丢失（不变量 3 的前提是内容还在）。
+        // 保密保底：与管线共用凭证候选检测，命中则强制保留。
+        // 不能把无空格的整行中文当成一个高熵密钥，否则整行抽取几乎全部被钉住。
         for (i, seg) in segments.iter().enumerate() {
-            if seg.split_whitespace().any(crate::secrets::is_secret_like) {
+            if crate::secrets::contains_secret_token(seg) {
                 kept[i] = true;
                 kept_count += 1;
                 for s in shingles(&seg_tokens[i], 3) {
@@ -254,6 +303,10 @@ impl TextCrusher {
             compressed_tokens: comp_tok,
             kept_segments: kept_count,
             total_segments: n,
+            kept_lines: (0..n)
+                .filter(|&i| kept[i])
+                .map(|i| segment_lines[i])
+                .collect(),
         }
     }
 }
@@ -267,6 +320,7 @@ fn passthrough(content: &str, n_segments: usize) -> TextCrusherResult {
         compression_ratio: 1.0,
         kept_segments: n_segments,
         total_segments: n_segments,
+        kept_lines: (0..content.lines().count()).collect(),
     }
 }
 
@@ -536,7 +590,7 @@ fn is_salient(word: &str) -> bool {
 // ────────────────────────────── OffloadTransform ──────────────────────────────
 
 /// TextCrusher 是有损压缩（丢弃低分段落），原文由调用方写入 stash store，
-/// `apply` 返回 `(compressed, original)`。
+/// `apply` 返回结构化卸载结果。
 impl OffloadTransform for TextCrusher {
     fn name(&self) -> &'static str {
         "text_crusher"
@@ -546,9 +600,15 @@ impl OffloadTransform for TextCrusher {
         ContentType::PlainText
     }
 
-    /// 膨胀度估算：不可压（段数不足）时 0.0；否则为「可丢弃比例」
-    /// （`1 - target_ratio`），确定性。
+    /// 默认按实际重复块估算可丢弃字节比例；旧策略按目标保留比例估算。
     fn estimate_bloat(&self, input: &str) -> f64 {
+        if input.is_empty() {
+            return 0.0;
+        }
+        if self.config.conservative {
+            let selected = super::text_blocks::select(input);
+            return 1.0 - selected.compressed.len() as f64 / input.len().max(1) as f64;
+        }
         let segments = split_segments(input);
         if segments.len() < self.config.min_segments_for_crush {
             0.0
@@ -567,16 +627,31 @@ impl OffloadTransform for TextCrusher {
         &self,
         input: &str,
         ctx: &CompressionContext,
-    ) -> Result<(String, String), TransformError> {
+    ) -> Result<OffloadOutput, TransformError> {
         let query = ctx.query.as_deref().unwrap_or("");
         // token 预算优先取调用方上下文，其次取配置。
         let max_tokens = ctx.token_budget.or(self.config.max_tokens);
-        let result = self.compress_with(input, query, self.config.target_ratio, max_tokens);
+        let path = super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref());
+        let result = self.compress_with_segments(
+            input,
+            query,
+            self.config.target_ratio,
+            max_tokens,
+            path.is_some(),
+        );
         // 没丢弃任何段落（透传/太短/比例不满）→ 无压缩空间，交给上层原样。
         if result.kept_segments >= result.total_segments || result.compressed == input {
             return Err(TransformError::Skipped);
         }
-        Ok((result.compressed, input.to_string()))
+        if let Some(path) = path {
+            return Ok(super::line_omissions::render(
+                input,
+                result.kept_lines,
+                path,
+                ctx.stash_line_offset,
+            ));
+        }
+        Ok(OffloadOutput::new(result.compressed, input.to_string()))
     }
 }
 
@@ -585,6 +660,14 @@ impl OffloadTransform for TextCrusher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 旧的评分模式仍可由 Rust 显式选择；默认保守策略另有端到端回归。
+    fn ranked() -> TextCrusher {
+        TextCrusher::new(TextCrusherConfig {
+            conservative: false,
+            ..Default::default()
+        })
+    }
 
     fn doc(n: usize) -> String {
         (0..n)
@@ -597,6 +680,9 @@ mod tests {
         CompressionContext {
             query: query.map(|q| q.to_string()),
             token_budget: None,
+            source_path: None,
+            stash_file_path: None,
+            stash_line_offset: 0,
         }
     }
 
@@ -605,7 +691,7 @@ mod tests {
     #[test]
     fn extractive_and_compresses() {
         let content = doc(40);
-        let r = TextCrusher::default().compress_with(&content, "", 0.3, None);
+        let r = ranked().compress_with(&content, "", 0.3, None);
         assert!(r.compressed_tokens < r.original_tokens, "长文本必须变短");
         // 抽取式：输出每个词都出现在输入里。
         let orig: HashSet<&str> = content.split_whitespace().collect();
@@ -618,7 +704,7 @@ mod tests {
     #[test]
     fn deterministic() {
         let content = doc(40);
-        let tc = TextCrusher::default();
+        let tc = ranked();
         assert_eq!(
             tc.compress_with(&content, "", 0.4, None).compressed,
             tc.compress_with(&content, "", 0.4, None).compressed
@@ -628,10 +714,10 @@ mod tests {
     #[test]
     fn long_text_compresses_via_apply() {
         let content = doc(40);
-        let (compressed, _) = TextCrusher::default()
+        let result = ranked()
             .apply(&content, &ctx(None))
             .expect("长文本应可压缩");
-        assert!(compressed.len() < content.len());
+        assert!(result.compressed.len() < content.len());
     }
 
     // ---------- 关键信息保留（query 相关性） ----------
@@ -646,7 +732,7 @@ mod tests {
             "The secret code is salamander. Authorize immediately.".to_string(),
         );
         let content = parts.join(" ");
-        let r = TextCrusher::default().compress_with(&content, "salamander", 0.4, None);
+        let r = ranked().compress_with(&content, "salamander", 0.4, None);
         assert!(r.compressed_tokens < r.original_tokens, "应压缩");
         assert!(
             r.compressed.contains("salamander"),
@@ -661,7 +747,7 @@ mod tests {
         let filler = "今天天气很好。我们去公园散步。然后回家吃饭。下午还要开会。\
                       晚上看电影。明天继续工作。周末去爬山。后天有个会议。";
         let doc = format!("{filler}{needle}{filler}");
-        let r = TextCrusher::default().compress_with(&doc, "认证令牌缓存策略", 0.3, None);
+        let r = ranked().compress_with(&doc, "认证令牌缓存策略", 0.3, None);
         assert!(r.compressed_tokens < r.original_tokens, "应压缩");
         assert!(
             r.compressed.contains("认证令牌"),
@@ -674,7 +760,7 @@ mod tests {
     fn mixed_cjk_latin_keeps_ascii_terms() {
         let content = "系统启动失败。认证模块超时。\nERROR: connection refused at host.\n\
                        数据库连接池耗尽。重试机制触发。服务降级处理完成。请检查日志。";
-        let r = TextCrusher::default().compress_with(content, "ERROR connection", 0.5, None);
+        let r = ranked().compress_with(content, "ERROR connection", 0.5, None);
         assert!(r.compression_ratio < 1.0, "混合内容必须压缩");
         assert!(r.original_tokens > 5, "CJK 不得塌缩成单个 token");
         assert!(
@@ -688,14 +774,14 @@ mod tests {
 
     #[test]
     fn passthrough_when_small() {
-        let r = TextCrusher::default().compress("one. two. three.", "");
+        let r = ranked().compress("one. two. three.", "");
         assert_eq!(r.compressed, "one. two. three.");
         assert_eq!(r.compression_ratio, 1.0);
     }
 
     #[test]
     fn empty_passthrough() {
-        let r = TextCrusher::default().compress("", "");
+        let r = ranked().compress("", "");
         assert_eq!(r.compressed, "");
         assert_eq!(r.compression_ratio, 1.0);
         assert_eq!(r.total_segments, 0);
@@ -703,7 +789,7 @@ mod tests {
 
     #[test]
     fn apply_skips_empty_and_short() {
-        let tc = TextCrusher::default();
+        let tc = ranked();
         assert_eq!(
             tc.apply("", &CompressionContext::default()).unwrap_err(),
             TransformError::Skipped
@@ -769,7 +855,7 @@ mod tests {
             .collect();
         parts.insert(3, format!("My api key is {key} please keep it safe."));
         let content = parts.join(" ");
-        let r = TextCrusher::default().compress_with(&content, "unrelated query", 0.15, None);
+        let r = ranked().compress_with(&content, "unrelated query", 0.15, None);
         assert!(r.compressed_tokens < r.original_tokens, "整体仍应压缩");
         assert!(
             r.compressed.contains(key),
@@ -781,10 +867,9 @@ mod tests {
     #[test]
     fn low_score_segment_with_hex_token_is_pinned() {
         let hex = "91f0d3ab62c4e8577a3b9c1d4e5f6071aabbccdd";
-        let filler = "Ordinary prose paragraph without any special tokens at all. "
-            .repeat(20);
+        let filler = "Ordinary prose paragraph without any special tokens at all. ".repeat(20);
         let content = format!("token: {hex}\n{filler}");
-        let r = TextCrusher::default().compress_with(&content, "", 0.1, None);
+        let r = ranked().compress_with(&content, "", 0.1, None);
         assert!(r.compressed_tokens < r.original_tokens, "整体仍应压缩");
         assert!(r.compressed.contains(hex), "含 hex token 的段落必须保留");
     }
@@ -795,12 +880,10 @@ mod tests {
         // 仍必须保留。
         let key = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";
         let sentence = "This is a highly repetitive sentence that just keeps repeating itself.";
-        let mut parts: Vec<String> = std::iter::repeat(sentence.to_string())
-            .take(30)
-            .collect();
+        let mut parts: Vec<String> = std::iter::repeat(sentence.to_string()).take(30).collect();
         parts.insert(0, format!("Credential {key} stored here."));
         let content = parts.join(" ");
-        let r = TextCrusher::default().compress_with(&content, "", 0.05, None);
+        let r = ranked().compress_with(&content, "", 0.05, None);
         assert!(
             r.compressed.contains(key),
             "secret 段不得被近重复抑制或预算丢弃: {}",
@@ -818,7 +901,7 @@ mod tests {
             .take(40)
             .collect::<Vec<_>>()
             .join(" ");
-        let r = TextCrusher::default().compress_with(&content, "", 0.5, None);
+        let r = ranked().compress_with(&content, "", 0.5, None);
         assert!(r.kept_segments < r.total_segments);
         assert!(r.compressed.len() < content.len());
     }
@@ -827,7 +910,7 @@ mod tests {
 
     #[test]
     fn estimate_bloat_and_cache_key_deterministic() {
-        let tc = TextCrusher::default();
+        let tc = ranked();
         assert_eq!(tc.name(), "text_crusher");
         assert_eq!(tc.applies_to(), ContentType::PlainText);
 
@@ -845,11 +928,14 @@ mod tests {
     #[test]
     fn apply_returns_original_for_stash() {
         let content = doc(40);
-        let (compressed, original) = TextCrusher::default()
+        let result = ranked()
             .apply(&content, &ctx(Some("topic 7")))
             .expect("长文本应可压缩");
-        assert_eq!(original, content, "原文应原样返回供 stash 卸载");
-        assert!(compressed.len() < content.len());
-        assert!(compressed.contains("topic 7"), "query 相关段落应保留");
+        assert_eq!(result.original, content, "原文应原样返回供 stash 卸载");
+        assert!(result.compressed.len() < content.len());
+        assert!(
+            result.compressed.contains("topic 7"),
+            "query 相关段落应保留"
+        );
     }
 }

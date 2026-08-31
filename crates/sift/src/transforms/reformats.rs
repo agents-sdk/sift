@@ -42,11 +42,11 @@ impl ReformatTransform for JsonMinifier {
             return Err(TransformError::Skipped);
         }
 
-        let value: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|_| TransformError::InvalidInput)?;
+        let value: serde_json::Value =
+            serde_json::from_str(trimmed).map_err(|_| TransformError::InvalidInput)?;
 
-        let minified = serde_json::to_string(&value)
-            .map_err(|e| TransformError::Internal(e.to_string()))?;
+        let minified =
+            serde_json::to_string(&value).map_err(|e| TransformError::Internal(e.to_string()))?;
 
         // 防御：紧凑化若未变短（输入已是紧凑 JSON，或转义规则增加字节），
         // 返回原文，保证绝不膨胀。
@@ -134,14 +134,15 @@ impl ReformatTransform for LogTemplate {
         }
 
         let tokenized: Vec<Vec<&str>> = lines.iter().map(|l| tokenize(l)).collect();
+        let protected = super::log_context::protected_lines(&lines);
 
         let mut output = String::with_capacity(input.len());
         let mut next_template_id = 1usize;
         let mut run: Option<Run> = None;
 
         for (i, tokens) in tokenized.iter().enumerate() {
-            if tokens.is_empty() {
-                // 空行 / 纯空白行：打断任何活动 run。
+            if tokens.is_empty() || protected.contains(&i) {
+                // 空行及执行上下文打断模板，命令/续行必须直接可见。
                 if let Some(r) = run.take() {
                     flush_run(
                         &r,
@@ -352,7 +353,9 @@ mod tests {
 
     #[test]
     fn json_invalid_input_errors() {
-        let err = JsonMinifier.apply("{not: valid", &ctx()).expect_err("must fail");
+        let err = JsonMinifier
+            .apply("{not: valid", &ctx())
+            .expect_err("must fail");
         assert_eq!(err, TransformError::InvalidInput);
     }
 
@@ -364,7 +367,9 @@ mod tests {
 
     #[test]
     fn json_whitespace_only_skipped() {
-        let err = JsonMinifier.apply("   \n\t  ", &ctx()).expect_err("ws-only must skip");
+        let err = JsonMinifier
+            .apply("   \n\t  ", &ctx())
+            .expect_err("ws-only must skip");
         assert_eq!(err, TransformError::Skipped);
     }
 
@@ -418,7 +423,9 @@ mod tests {
 
     #[test]
     fn json_surrounding_whitespace_is_stripped() {
-        let r = JsonMinifier.apply("   [ 1 , 2 ]   \n", &ctx()).expect("parses");
+        let r = JsonMinifier
+            .apply("   [ 1 , 2 ]   \n", &ctx())
+            .expect("parses");
         assert_eq!(r, "[1,2]");
     }
 
@@ -450,7 +457,7 @@ mod tests {
 
     #[test]
     fn log_template_run_collapses() {
-        // 50 条 INFO 行，时间戳 / worker / job 变化——同模板，应折叠。
+        // 首行作为上下文保留，其余 49 条同模板 INFO 行应折叠。
         let mut log = String::new();
         for i in 0..50 {
             log.push_str(&format!(
@@ -461,8 +468,13 @@ mod tests {
             ));
         }
         let r = reformat().apply(&log, &ctx()).expect("must collapse");
-        assert!(r.contains("[Template T1:"), "got: {}", r.chars().take(200).collect::<String>());
-        assert!(r.contains("(50 occurrences)"));
+        assert!(
+            r.contains("[Template T1:"),
+            "got: {}",
+            r.chars().take(200).collect::<String>()
+        );
+        assert!(r.starts_with(log.lines().next().unwrap()));
+        assert!(r.contains("(49 occurrences)"));
         // 变体仍在输出中（无损保证）。
         assert!(r.contains("worker-7"));
         assert!(r.len() < log.len());
@@ -494,6 +506,8 @@ mod tests {
         }
         let r = reformat().apply(&log, &ctx()).expect("collapses");
         let mut iter = r.lines();
+        let first = iter.next().unwrap();
+        assert_eq!(first, log.lines().next().unwrap());
         let header = iter.next().unwrap();
         assert!(header.starts_with("[Template T1:"));
         let template_part = header
@@ -507,7 +521,7 @@ mod tests {
             .position(|t| *t == WILDCARD)
             .expect("must have wildcard");
 
-        let mut reconstructed = Vec::new();
+        let mut reconstructed = vec![first.to_owned()];
         for variant_line in iter {
             if variant_line.is_empty() {
                 continue;
@@ -552,7 +566,10 @@ mod tests {
         let r = reformat().apply(&log, &ctx()).expect("processes");
         // 无论是否折叠，每个变体值都必须存活（无损）。
         for i in 0..25 {
-            assert!(r.contains(&format!("event-{i}")), "missing event-{i} in output");
+            assert!(
+                r.contains(&format!("event-{i}")),
+                "missing event-{i} in output"
+            );
         }
     }
 
@@ -574,7 +591,10 @@ mod tests {
         let t2_count = r.matches("[Template T2:").count();
         // 允许 0/0（都不折叠）或 1/1（各自折叠）；禁止 1/0 且跨过空行合并。
         if t1_count == 1 && t2_count == 0 {
-            assert!(!r.contains("(10 occurrences)"), "must not bridge the blank line");
+            assert!(
+                !r.contains("(10 occurrences)"),
+                "must not bridge the blank line"
+            );
         }
     }
 
@@ -617,7 +637,10 @@ mod tests {
             log.push_str(&format!("INFO worker-{i} ready\n"));
         }
         let r = reformat().apply(&log, &ctx()).expect("collapses");
-        assert!(r.ends_with('\n'), "input had trailing newline, output must too");
+        assert!(
+            r.ends_with('\n'),
+            "input had trailing newline, output must too"
+        );
     }
 
     #[test]

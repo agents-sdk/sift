@@ -89,6 +89,15 @@ export interface TextCompressResult {
   tokensSaved: number;
 }
 
+/** stash 原文的按行读取结果（行号从 1 开始，文本保留原始换行）。 */
+export interface StashSlice {
+  text: string;
+  startLine: number;
+  lineCount: number;
+  totalLines: number;
+  hasMore: boolean;
+}
+
 export type ContentType =
   | 'json_array'
   | 'build_output'
@@ -101,8 +110,9 @@ export type ContentType =
 interface NativeModule {
   SiftInstance: NativeSiftConstructor;
   siftRequest(body: object, query?: string): CompressResult;
-  siftText(text: string, query?: string): TextCompressResult;
+  siftText(text: string, query?: string, sourcePath?: string): TextCompressResult;
   retrieve(key: string): string | null;
+  retrieveLines(key: string, startLine: number, lineCount: number): StashSlice | null;
   detectContentType(text: string): ContentType;
   detectRequestFormat(body: object): RequestFormat;
 }
@@ -113,8 +123,9 @@ interface NativeSiftConstructor {
 
 interface NativeSiftInstance {
   siftRequest(body: object, query?: string): CompressResult;
-  siftText(text: string, query?: string): TextCompressResult;
+  siftText(text: string, query?: string, sourcePath?: string): TextCompressResult;
   retrieve(key: string): string | null;
+  retrieveLines(key: string, startLine: number, lineCount: number): StashSlice | null;
 }
 
 /** `createSift` 的实例配置。 */
@@ -126,8 +137,9 @@ export interface SiftOptions {
 /** 绑定到独立 stash store 的压缩 API。 */
 export interface Sift {
   siftRequest(body: object, query?: string): CompressResult;
-  siftText(text: string, query?: string): TextCompressResult;
+  siftText(text: string, query?: string, sourcePath?: string): TextCompressResult;
   retrieve(key: string): string | null;
+  retrieveLines(key: string, startLine: number, lineCount: number): StashSlice | null;
   detectContentType(text: string): ContentType;
   detectRequestFormat(body: object): RequestFormat;
 }
@@ -147,12 +159,15 @@ export function createSift(options: SiftOptions): Sift {
       const r = instance.siftRequest(body, query);
       return { ...r, stashStored: r.stashStored ?? 0 };
     },
-    siftText(text: string, query?: string): TextCompressResult {
-      const r = instance.siftText(text, query);
+    siftText(text: string, query?: string, sourcePath?: string): TextCompressResult {
+      const r = instance.siftText(text, query, sourcePath);
       return { ...r, stashKey: r.stashKey ?? null };
     },
     retrieve(key: string): string | null {
       return instance.retrieve(key);
+    },
+    retrieveLines(key: string, startLine: number, lineCount: number): StashSlice | null {
+      return instance.retrieveLines(key, startLine, lineCount);
     },
     detectContentType(text: string): ContentType {
       return native.detectContentType(text);
@@ -174,9 +189,18 @@ export function siftRequest(body: object, query?: string): CompressResult {
   return { ...r, stashStored: r.stashStored ?? 0 };
 }
 
-/** 压缩单个字符串（如把工具输出原文送进任意 API 之前）。 */
-export function siftText(text: string, query?: string): TextCompressResult {
-  const r = native.siftText(text, query);
+/**
+ * 压缩单个字符串（如把工具输出原文送进任意 API 之前）。
+ * FileStashStore 下源码、搜索、日志、diff、整行纯文本的省略点会内联 stash 绝对文件路径、省略行数和 1-based
+ * 起始行。纯文本默认只折叠同章节完全相同的完整块，不按 query 或目标比例删除独有内容。
+ * 可选的 `sourcePath` 用于通过扩展名稳定选择 grammar。
+ */
+export function siftText(
+  text: string,
+  query?: string,
+  sourcePath?: string,
+): TextCompressResult {
+  const r = native.siftText(text, query, sourcePath);
   // napi 对 Option::None 的字段会整个省略,这里补齐为 null,保证字段形状稳定
   return { ...r, stashKey: r.stashKey ?? null };
 }
@@ -184,6 +208,18 @@ export function siftText(text: string, query?: string): TextCompressResult {
 /** 按取回标记 key 取回压缩时卸载的原文。 */
 export function retrieve(key: string): string | null {
   return native.retrieve(key);
+}
+
+/**
+ * 按 stash 原文的 1-based 行号读取连续分片。单次最多读取 1000 行。
+ * 返回文本保留命中范围内的原始 LF/CRLF 字节。
+ */
+export function retrieveLines(
+  key: string,
+  startLine: number,
+  lineCount: number,
+): StashSlice | null {
+  return native.retrieveLines(key, startLine, lineCount);
 }
 
 /** 内容类型检测（压缩分发键）。 */

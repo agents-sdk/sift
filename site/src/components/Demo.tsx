@@ -57,12 +57,12 @@ function bytes(n: number): string {
 // 压缩输出的差异高亮:
 //  - «/<<stash:HASH>>  恢复标记 → 金色
 //  - [N lines omitted: …] / [... N more …] / [N lines compressed …] → 灰色折叠标记
-//  - // ... N lines omitted（代码折叠注释，如 Java/JS/C++/Python）→ 灰色折叠标记
+//  - // ... N lines omitted from file "...", starting at line M → 灰色折叠标记
 function highlightCompressed(text: string) {
   const parts: Array<{ t: string; k: 'stash' | 'fold' | 'stat' | null }> = [];
   // 顺序匹配:stash 标记 | 括号折叠行 | 代码折叠注释
   const re =
-    /(<<stash:[a-f0-9]+>>|«stash:[a-f0-9]+»)|(\[[^\]\n]{0,120}(?:omitted|compressed|more|changed|Retrieve)[^\]\n]{0,120}\])|((?:\/\/|#)\s*\.\.\.\s*\d+\s+lines?\s+omitted)/g;
+    /(<<stash:[a-f0-9]+>>|«stash:[a-f0-9]+»)|(\[\.\.\. \d+ lines omitted from file "(?:\\.|[^"\\\n])*", starting at line \d+\]|\[[^\]\n]{0,120}(?:omitted|compressed|more|changed|Retrieve)[^\]\n]{0,120}\])|((?:\/\/|#)\s*\.\.\.\s*\d+\s+lines?\s+omitted(?:\s+from\s+file\s+"(?:\\.|[^"\\\n])*",\s+starting\s+at\s+line\s+\d+)?)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
@@ -84,6 +84,7 @@ export default function Demo() {
   // 自定义输入状态
   const [input, setInput] = useState('');
   const [query, setQuery] = useState('');
+  const [sourcePath, setSourcePath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiResult | null>(null);
@@ -117,7 +118,7 @@ export default function Demo() {
       const res = await fetch('/api/compress', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: input, query }),
+        body: JSON.stringify({ text: input, query, sourcePath }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -161,13 +162,23 @@ export default function Demo() {
       )}
 
       {mode === 'builtin' && <p className="sample-desc">{sample.desc}</p>}
+      {mode === 'builtin' && <p className="note">相关性 query：<code>{sample.query || '未设置'}</code></p>}
+      {((mode === 'builtin' && sample.type === 'plain_text') || (mode === 'custom' && result?.detected === 'plain_text')) && (
+        <p className="note">纯文本默认保守去重：保留完整段落或发言块，仅折叠同章节完全相同的块。不按 query 或目标比例删除独有内容；没有明确重复时原样返回。</p>
+      )}
+      {mode === 'builtin' && sample.lossy && (
+        <p className="note">内置样例是预生成结果，stash 路径属于样例生成环境；本地接入时会显示实际落盘路径。</p>
+      )}
+      {mode === 'builtin' && !sample.lossy && sample.changed && (
+        <p className="note">本例仅做无损重排，没有省略片段，也没有外置 stash 文件，因此不显示行号提示。</p>
+      )}
 
       {mode === 'custom' && (
         <div className="custom-input">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="粘贴任意内容:JSON 数组、构建日志、grep 结果、git diff、普通文本……(检测自动分发)"
+            placeholder="粘贴任意内容:源码、JSON 数组、构建日志、grep 结果、git diff、普通文本……"
             rows={7}
           />
           <div className="custom-actions">
@@ -176,13 +187,19 @@ export default function Demo() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="可选:相关性 query(帮助保留关键行)"
             />
+            <input
+              value={sourcePath}
+              onChange={(e) => setSourcePath(e.target.value)}
+              placeholder="可选:源码路径(仅用于按扩展名识别语言)"
+            />
             <button className="run" onClick={run} disabled={busy || !input.trim()}>
               {busy ? '压缩中…' : '压缩'}
             </button>
           </div>
+          <p className="note">源码、搜索结果、日志、Diff 和整行纯文本的省略处会写明 stash 绝对文件路径、省略行数和起始行。本地 Agent 可直接分片读取；演示站显示的是服务端路径，不能在你的本地读取。JSON 结构采样等未确认行映射的情况暂不标行号。</p>
           {error && <p className="error">{error}</p>}
           {result && !result.changed && (
-            <p className="note">内容太短或无需压缩(单 block 最小 512 字节),原样返回。</p>
+            <p className="note">未发现值得压缩的内容，原样返回。可能是内容不足 512 字节、没有可折叠的重复块，或省略提示抵消了压缩收益。</p>
           )}
         </div>
       )}

@@ -48,7 +48,7 @@ npm run demo -- --save       # 运行全部并分别保存到 demo/results/
 ## 快速开始
 
 ```ts
-import { siftRequest, retrieve } from '@agent-context/sift';
+import { siftRequest, siftText, retrieve, retrieveLines } from '@agent-context/sift';
 
 // 1. 压缩（发送前）
 const result = siftRequest(requestBody, userQuery);
@@ -62,13 +62,21 @@ const response = await client.messages.create({
 // 3. 如需恢复原文：从压缩文本里提取 <<stash:KEY>>，取回
 const key = extractStashKeys(result.body)[0];
 const original = retrieve(key); // string | null
+const fragment = retrieveLines(key, 120, 80); // StashSlice | null
+
+// 源码无需路径也能生成可直接读取的 stash 文件分片
+const code = siftText(fileContent, userQuery);
+// // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
+
+// 可选真实路径用于通过扩展名稳定选择 grammar
+const fileCode = siftText(fileContent, userQuery, 'src/services/OrderService.java');
 ```
 
 ## API
 
 ### `createSift({ stashDir })`
 
-创建绑定到独立 stash 目录的 API 实例。该实例的 `siftRequest`、`siftText` 和 `retrieve`
+创建绑定到独立 stash 目录的 API 实例。该实例的 `siftRequest`、`siftText`、`retrieve` 和 `retrieveLines`
 始终使用传入的目录，不受 `SIFT_STASH_DIR` 影响；相对路径按调用 `createSift` 时的工作目录
 解析。
 
@@ -78,10 +86,11 @@ import { createSift } from '@agent-context/sift';
 const sift = createSift({ stashDir: '/var/lib/my-app/sift-stash' });
 const result = sift.siftText(toolOutput);
 const original = result.stashKey ? sift.retrieve(result.stashKey) : null;
+const fragment = result.stashKey ? sift.retrieveLines(result.stashKey, 120, 80) : null;
 ```
 
 每次调用 `createSift` 都会创建独立实例，因此同一 Node.js 进程可以同时使用多个 stash
-目录。直接导入的顶层 `siftRequest`、`siftText` 和 `retrieve` 保持原有行为，继续使用
+目录。直接导入的顶层 `siftRequest`、`siftText`、`retrieve` 和 `retrieveLines` 保持原有行为，继续使用
 `SIFT_STASH_DIR`、`~/.sift/stash`、系统临时目录这一默认优先级。
 
 ### `siftRequest(body, query?)`
@@ -118,9 +127,37 @@ const original = result.stashKey ? sift.retrieve(result.stashKey) : null;
 按 `<<stash:KEY>>` 里的 key 取回压缩时卸载的原文，返回 `string | null`。
 `null` 表示 key 不存在或已过期（见「限制」）。
 
-### `siftText(text, query?)`
+### `retrieveLines(key, startLine, lineCount)`
+
+按 stash 原文的行号读取连续分片，返回
+`{ text, startLine, lineCount, totalLines, hasMore } | null`。`startLine` 从 1 开始，
+`lineCount` 必须在 1–1000 之间；返回的 `text` 保留命中范围内的原始 LF / CRLF。
+越过原文末尾时返回实际可用行数，起始行越界、key 不存在或已过期时返回 `null`。
+
+使用落盘 stash 时，源码、搜索结果、日志、Git Diff 和整行纯文本的实际省略点会就地输出
+`[... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32]`，代码使用注释形式：
+`// ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32`。
+路径是规范化后的绝对路径，`starting at line` 是 1-based 起始行，前面的数字是连续省略行数；
+Coding Agent 可以直接把它们换成 `read_file` 等工具的起始行和读取数量。提示不要求理解 stash
+hash 或调用 Sift API。搜索结果的源码行号和 diff 的 hunk 行号不是这里的 stash 行号。
+落盘模式有损阶段直接使用原文视图，避免沿用无损重排后的坐标；可验证的混合内容整行分段
+会累加其在完整 stash 中的行偏移。过短空隙若不值得添加提示则原样保留。
+日志的首个非空行、可识别的命令回显（如 `$ cargo build`、shell tracing、npm script、PowerShell 提示符）
+及显式续行强制原样可见，不参与去重、模板化或普通日志行数预算竞争；不会仅因可从 stash 恢复就省略命令。
+JSON 结构采样、行内片段和 tag protect 改变映射的情况暂不标注；内存或远程 stash 后端也不伪造本地路径。
+
+### `siftText(text, query?, sourcePath?)`
 
 压缩单个字符串（不包请求体），适合在把工具输出原文送进任意 API / 存储之前处理。
+行片段提示不依赖 `sourcePath`：有损管线从 `FileStashStore` 取得完整原文的绝对文件路径，并在
+省略点写明省略行数和 1-based 起始行，不把同一行内的句子计作多行。
+纯文本默认按完整段落/发言块保守去重，只折叠同章节完全相同的块，保留第一份及全部独有内容。
+不同编号、数字、状态或发言人的内容不因句式相似而合并；标题、代码围栏、可识别的命令和结论块保留。
+query 和目标比例不会让纯文本删除独有事实；没有明确重复，或省略提示抵消收益时，原样返回。
+折叠会省略重复次数和位置，因此仍属于有损压缩，完整原文保存在 stash 中。
+可选的 `sourcePath` 仅用于通过扩展名直接选择对应的
+tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java、C、C++；因此
+只有一个长函数、特征行占比很低的文件也能稳定进入源码压缩。
 返回 `{ text, changed, lossy, stashKey, tokensSaved }`：有损时 `text` 尾部带
 `<<stash:KEY>>` 标记、`stashKey` 非空，可用 `retrieve(stashKey)` 取回原文；无损压缩
 （如 JSON minify）时 `lossy` 为 `false` 且无标记。小于 512 字节的输入直接透传。
@@ -169,14 +206,16 @@ const original = result.stashKey ? sift.retrieve(result.stashKey) : null;
 ```
 原文 ──compress──▶ 压缩文本 + <<stash:KEY>>        （发给 API，省 token）
                         │
-                        └── store.put(KEY, 原文)   （留在进程内）
+                        └── store.put(KEY, 原文)   （默认落盘）
 
-需要原文时：从消息里找 <<stash:KEY>> → retrieve(KEY) → 原文
+需要完整原文时：从消息里找 <<stash:KEY>> → retrieve(KEY) → 原文
+只需局部时：根据省略提示中的 stash 文件路径、起始行和行数 → 直接分片读文件
 ```
 
 典型恢复流程：模型看到压缩内容后说「我需要看完整数据」，应用从最近的压缩消息里
-提取 `<<stash:KEY>>`，`retrieve` 取回原文，把原文补发给模型。Sift 当前不会自动向模型
-注入 retrieve tool；需要模型自主取回时，调用方必须显式提供相应工具。
+提取 `<<stash:KEY>>`，用 `retrieve` 取回全文或用 `retrieveLines` 取回分片，再补发给模型。
+若 Agent 与 Sift 共享文件系统，则可直接读取提示里的 stash 文件，不必接入 Sift API。
+Sift 当前不会自动向模型注入 retrieve tool；需要从 stash 自主取回时，调用方必须显式提供相应工具。
 
 提取 key 的辅助：
 
