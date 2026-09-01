@@ -24,8 +24,8 @@ function detectLibc(): 'gnu' | 'musl' {
 
 function loadNative(): NativeModule {
   // 加载顺序：
-  // 1. 平台子包 @agent-context/sift-<platform>（npm 安装后由 optionalDependencies 命中）
-  // 2. 本地 native/sift.<platform>.node（仓库内开发模式）
+  // 1. 本地 native/sift.<platform>.node（仓库内开发模式，必须匹配当前源码）
+  // 2. 平台子包 @agent-context/sift-<platform>（发布包由 optionalDependencies 命中）
   // 3. native/sift.node（napi build 未加 --platform 的产物）
   const platform = platformTriple();
   const nativeDirs = [
@@ -33,11 +33,11 @@ function loadNative(): NativeModule {
     path.join(__dirname, '..', '..', 'native'), // dist-demo/src、dist-test 布局
   ];
   const candidates: Array<() => NativeModule> = [
-    () => require(`@agent-context/sift-${platform}`) as NativeModule,
     ...nativeDirs.map(
       (dir) => () => require(path.join(dir, `sift.${platform}.node`)) as NativeModule,
     ),
     ...nativeDirs.map((dir) => () => require(path.join(dir, 'sift.node')) as NativeModule),
+    () => require(`@agent-context/sift-${platform}`) as NativeModule,
   ];
   for (const load of candidates) {
     try {
