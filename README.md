@@ -6,9 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **60.6% less context. 10,548 estimated tokens saved. Every lossy benchmark case recovered.**
-
-**58,017 B → 22,859 B** across all eight bundled benchmark scenarios, with successful recovery in **4/4 lossy cases**. [See the complete results.](#what-does-that-save)
+### **60.6% less context · ~10,548 tokens saved · 4/4 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -16,27 +14,23 @@ npm install @agent-context/sift
 
 Status: **Alpha** · API details may change before 1.0 · [Operational notes](#operational-notes)
 
-## Ready-made integrations
+## Use it with your agent
 
-Using [Pi](https://github.com/earendil-works/pi) or [OpenCode](https://github.com/anomalyco/opencode)? Their host adapters compress each new tool result automatically and register a `sift_retrieve` tool so the agent can recover stashed source when needed:
+Ready-made adapters compress tool results automatically and let the agent retrieve stashed originals:
 
 - **Pi:** `pi install npm:@agent-context/pi-sift`
-- **OpenCode:** add `["@agent-context/opencode-sift", { "minLength": 200 }]` to the `plugin` array in `opencode.json`
+- **OpenCode:** `@agent-context/opencode-sift`
 
-See [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins) for complete installation, configuration, storage, and troubleshooting guidance.
+[Setup and configuration →](https://github.com/agents-sdk/sift-plugins)
 
 ## Why sift?
 
-Agent conversations grow quickly. Build logs, search results, diffs, source files, and JSON responses are often much larger than the useful signal they contain. Sending all of that data again on every turn costs tokens and can crowd out the context that matters.
+Build logs, search results, diffs, source files, and JSON can quickly crowd useful context out of an agent conversation. sift keeps the signal and makes the rest recoverable:
 
-sift gives you:
-
-- **Lower context cost** — the bundled benchmark set was **60.6% smaller**, reducing 58,017 bytes to 22,859 bytes.
-- **Useful details first** — errors, stack traces, command lines, relevant search hits, and structural context are prioritized.
-- **Recoverable compression** — before any lossy result is returned, the complete original is stored and linked with a `<<stash:HASH>>` marker.
-- **Prompt-cache safety** — Anthropic messages through the last `cache_control` anchor are left untouched.
-- **One integration point** — request formats are detected automatically, so the same call works with Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses.
-- **Rust core, simple API** — compiled compression logic sits behind a small Node.js interface.
+- **Content-aware** — keeps errors, stack traces, commands, relevant matches, and structure.
+- **Recoverable** — stores the original before returning lossy output, linked by `<<stash:HASH>>`.
+- **Cache-safe** — leaves the Anthropic prefix through the last `cache_control` anchor untouched.
+- **Easy to adopt** — one Rust-backed Node.js API supports Anthropic Messages and both OpenAI request formats.
 
 ### More useful than blind truncation, safer than a one-way summary
 
@@ -46,29 +40,17 @@ sift gives you:
 | LLM summary | Partial | Usually no | Not necessarily | No |
 | **sift** | **Yes** | **Yes** | **Yes** | **Yes** |
 
-## What does that save?
+## Benchmark
 
-Measured with the eight deterministic [demo inputs](npm/core/demo/cases) and the published `0.0.1-alpha.7` package. See [BENCHMARK.md](BENCHMARK.md) for methodology and reproduction instructions.
+Eight deterministic [demo inputs](npm/core/demo/cases), measured with the published `0.0.1-alpha.7` package:
 
-| Scenario | Input | Output | Size reduction | Estimated tokens saved | Recovery |
-| --- | ---: | ---: | ---: | ---: | --- |
-| JSON array | 18,397 B | 2,975 B | 83.8% | 4,627 | PASS |
-| Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | Lossless |
-| Build log | 3,073 B | 1,543 B | 49.8% | 459 | Lossless |
-| Search results | 10,057 B | 2,863 B | 71.5% | 2,159 | PASS |
-| Git diff | 8,201 B | 8,201 B | 0% | 0 | Unchanged |
-| Mixed command output | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
-| Rust source code | 2,282 B | 350 B | 84.7% | 580 | PASS |
-| Unique plain text | 3,125 B | 3,125 B | 0% | 0 | Unchanged |
-| **Total** | **58,017 B** | **22,859 B** | **60.6%** | **10,548** | **4/4 lossy cases restored** |
+| Input | Output | Reduction | Est. tokens saved | Lossy recovery |
+| ---: | ---: | ---: | ---: | --- |
+| 58,017 B | 22,859 B | 60.6% | 10,548 | 4/4 restored |
 
-These are transparent fixture results, not a claim about every workload. The two unchanged cases are included deliberately: sift only publishes a result when it is smaller, and conservative plain-text compression keeps unique facts. `tokensSaved` uses sift's built-in estimator; actual provider token counts and savings depend on the model tokenizer and your data.
+Two cases were intentionally unchanged, showing that sift rejects compression with no savings and preserves unique facts. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
 ## Quick start
-
-```sh
-npm install @agent-context/sift
-```
 
 Compress an LLM request immediately before sending it:
 
