@@ -1,89 +1,213 @@
 # sift
 
-LLM 上下文压缩工具：在发送给 LLM 之前压缩对话上下文，节省 token 与缓存成本。核心为纯 Rust 实现，通过 napi-rs 以 npm 包 **`@agent-context/sift`** 提供 Node.js API。
+**Send less context. Keep the original within reach.**
 
-## 特性
+sift compresses large tool outputs before they are sent to an LLM. It reduces token usage and prompt-cache costs while keeping lossy source content recoverable from a local stash. The compression engine is written in Rust and is available to Node.js as [`@agent-context/sift`](npm/core/README.md).
 
-- **多请求格式**（自动检测）：Anthropic `/v1/messages`、OpenAI Chat Completions、OpenAI Responses API；`siftRequest` 默认只压缩工具输出并保护 system/user/assistant prompt，另有 `siftText` 显式压缩单条字符串
-- **按内容类型分发压缩器**：JSON 数组统计压缩、构建/测试日志、搜索结果、unified diff、纯文本完整块去重（同章节完全相同的段落/发言块保留首份）、tree-sitter AST 代码压缩（8 语言）
-- **无损优先**：先尝试无损重排（JSON minify、日志模板化），缩小到 ≤80% 即短路，不引入任何信息损失
-- **有损可恢复**：有损压缩的原文确认写入 stash store 后，输出才留下 `<<stash:HASH>>` 标记，可按 key 取回原文
-- **安全兜底**：冻结前缀（prompt cache 锚点）字节不动；tool_use/tool_result 配对保护；熵检测识别 API key / 凭证并强制保留；自定义 XML 标签占位保护
+English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-## 三大不变量
+### **60.6% less context. 10,548 estimated tokens saved. Every lossy benchmark case recovered.**
 
-任何改动不得违反：
-
-1. 只在消息内压缩，绝不跨消息丢弃内容
-2. 冻结前缀（`cache_control` 标记以下）字节不动
-3. 有损压缩必须经 stash 可恢复（`<<stash:HASH>>` 标记 + store 原文）
-
-## 安装与使用
+**58,017 B → 22,859 B** across all eight bundled benchmark scenarios, with successful recovery in **4/4 lossy cases**. [See the complete results.](#what-does-that-save)
 
 ```sh
 npm install @agent-context/sift
 ```
 
-```ts
-import { createSift, siftRequest, siftText, retrieve, retrieveLines } from "@agent-context/sift";
+Status: **Alpha** · API details may change before 1.0 · [Operational notes](#operational-notes)
 
-// 请求体压缩（自动检测 Anthropic / OpenAI 格式）
-const { body, changed, tokensSaved } = siftRequest(requestBody, "用户当前的问题");
+## Why sift?
 
-// 或直接压缩源码；折叠点直接指向已落盘的 stash 文件
-const r = siftText(fileContent, "用户当前的问题");
-// // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
+Agent conversations grow quickly. Build logs, search results, diffs, source files, and JSON responses are often much larger than the useful signal they contain. Sending all of that data again on every turn costs tokens and can crowd out the context that matters.
 
-// 若知道真实路径，可额外传入以通过扩展名稳定选择语言 grammar
-const withPath = siftText(fileContent, undefined, "src/services/OrderService.java");
+sift gives you:
 
-// 有损压缩的原文可按标记取回
-const original = retrieve(r.stashKey!);
+- **Lower context cost** — the bundled benchmark set was **60.6% smaller**, reducing 58,017 bytes to 22,859 bytes.
+- **Useful details first** — errors, stack traces, command lines, relevant search hits, and structural context are prioritized.
+- **Recoverable compression** — before any lossy result is returned, the complete original is stored and linked with a `<<stash:HASH>>` marker.
+- **Prompt-cache safety** — Anthropic messages through the last `cache_control` anchor are left untouched.
+- **One integration point** — request formats are detected automatically, so the same call works with Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses.
+- **Rust core, simple API** — compiled compression logic sits behind a small Node.js interface.
 
-// 也可从 stash 只取回需要的分片
-const fragment = retrieveLines(r.stashKey!, 120, 80);
+### More useful than blind truncation, safer than a one-way summary
 
-// 如需独立 stash 目录，创建绑定到该目录的实例
-const isolatedSift = createSift({ stashDir: "/var/lib/my-app/sift-stash" });
-const isolated = isolatedSift.siftText(toolOutput);
-const isolatedOriginal = isolatedSift.retrieve(isolated.stashKey!);
-```
+| Approach | Content-aware | Original recoverable | Anthropic cache prefix protected | Rejects results with no savings |
+| --- | :---: | :---: | :---: | :---: |
+| Blind truncation | No | No | Not necessarily | No |
+| LLM summary | Partial | Usually no | Not necessarily | No |
+| **sift** | **Yes** | **Yes** | **Yes** | **Yes** |
 
-完整 API 说明见 [`npm/core/README.md`](npm/core/README.md)。
+## What does that save?
 
-纯文本默认保守去重，不按 query、位置或目标比例删除独有内容。不同编号、数字、状态或发言人的块不会因为句式相似而合并；标题、代码围栏、可识别的命令和结论块保留。没有明确重复或提示抵消收益时原样返回。重复次数/位置仍属于原文信息，因此折叠后仍是有损压缩，原文保存在 stash。
+Measured with the eight deterministic [demo inputs](npm/core/demo/cases) and the published `0.0.1-alpha.7` package. See [BENCHMARK.md](BENCHMARK.md) for methodology and reproduction instructions.
 
-落盘 stash 的行片段提示覆盖源码折叠、搜索结果抽稀、日志、Git Diff 和整行纯文本：
-`[... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32]`。
-提示就地放在省略位置，坐标指向 stash 文件本身，Agent 可直接分片读文件；不依赖原始文件路径或 Sift API。
-可精确验证的混合内容整行分段也支持。无损 minify 不产生 stash；JSON 结构采样、行内片段或标签保护导致映射变化时，暂不伪造行号。
-日志首个非空行、可识别的命令回显及显式续行强制保留，不受日志行数预算截断，也不会被模板化隐藏。
+| Scenario | Input | Output | Size reduction | Estimated tokens saved | Recovery |
+| --- | ---: | ---: | ---: | ---: | --- |
+| JSON array | 18,397 B | 2,975 B | 83.8% | 4,627 | PASS |
+| Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | Lossless |
+| Build log | 3,073 B | 1,543 B | 49.8% | 459 | Lossless |
+| Search results | 10,057 B | 2,863 B | 71.5% | 2,159 | PASS |
+| Git diff | 8,201 B | 8,201 B | 0% | 0 | Unchanged |
+| Mixed command output | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
+| Rust source code | 2,282 B | 350 B | 84.7% | 580 | PASS |
+| Unique plain text | 3,125 B | 3,125 B | 0% | 0 | Unchanged |
+| **Total** | **58,017 B** | **22,859 B** | **60.6%** | **10,548** | **4/4 lossy cases restored** |
 
-## 工程结构
+These are transparent fixture results, not a claim about every workload. The two unchanged cases are included deliberately: sift only publishes a result when it is smaller, and conservative plain-text compression keeps unique facts. `tokensSaved` uses sift's built-in estimator; actual provider token counts and savings depend on the model tokenizer and your data.
 
-```
-crates/
-  sift/          # 压缩核心库（纯逻辑，无 napi 依赖）
-  sift-node/     # napi-rs cdylib 桥
-npm/core/        # npm 包 @agent-context/sift（TypeScript）
-.agents/PROJECT_MAP.md  # 工程地图：模块职责、压缩管线、发布链
-tests/fixtures/      # 压缩输入/输出 golden 样本
-```
-
-## 开发
+## Quick start
 
 ```sh
-cargo test --workspace                 # Rust 测试（全部必须过）
-cd npm/core && npm run build           # 本机 .node + tsc 编译 TS
-cd npm/core && npm run build:cross     # 本机交叉编译 macOS/Linux 6 平台（需 zig）
-cd npm/core && npm test                # TS 冒烟测试（先构建再运行）
+npm install @agent-context/sift
 ```
 
-Linux GNU 预编译包以 glibc 2.28 为最高 ABI 基线，可运行于 Oracle Linux 8.4 及 glibc 更新的发行版。
+Compress an LLM request immediately before sending it:
 
-- CI（PR/push）：clippy + cargo test + npm 冒烟
-- 发布：推 `v*` tag 触发 release 流水线，编 macOS/Linux/Windows 8 平台二进制并 publish 平台子包 + 根包
+```ts
+import OpenAI from "openai";
+import { siftRequest } from "@agent-context/sift";
+
+const openai = new OpenAI();
+const request = {
+  model: "gpt-5.6-sol",
+  input: conversationWithLargeToolOutputs,
+};
+
+const result = siftRequest(request, currentUserQuestion);
+const response = await openai.responses.create(result.body as any);
+
+console.log({
+  changed: result.changed,
+  tokensSaved: result.tokensSaved,
+  blocksCompressed: result.blocksCompressed,
+});
+```
+
+`siftRequest` changes only eligible tool outputs. System, user, and assistant prompts are protected by default.
+
+To compress a standalone tool result or file:
+
+```ts
+import { siftText } from "@agent-context/sift";
+
+const result = siftText(
+  fileContents,
+  currentUserQuestion,
+  "src/services/OrderService.java", // optional: improves language detection
+);
+
+console.log(result.text);
+console.log(result.tokensSaved);
+```
+
+Inputs smaller than 512 bytes are passed through unchanged, so it is safe to place sift on a general request path without pre-filtering every block.
+
+### What the model sees
+
+Illustratively, instead of carrying hundreds or thousands of repetitive lines into the next turn, the model keeps the useful structure and a route back to the source:
+
+```diff
+- 2,000 lines of commands, repeated status messages, and stack traces
++ $ cargo test --workspace
++ error[E0382]: borrow of moved value: `request`
++   --> src/client.rs:84:17
++ [... 1,962 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 19]
++ test result: FAILED. 127 passed; 1 failed
++ <<stash:HASH>>
+```
+
+The error and summary stay visible. The omitted lines remain available through the stash marker or exact file range.
+
+## Get the original back
+
+Lossy compression never returns a compressed result until the full input has been written to the stash. The output includes a marker such as:
+
+```text
+<<stash:8f1c2e...>>
+```
+
+Retrieve the entire original or only the lines you need:
+
+```ts
+import { retrieve, retrieveLines, siftText } from "@agent-context/sift";
+
+const result = siftText(longToolOutput, currentUserQuestion);
+
+if (result.stashKey) {
+  const original = retrieve(result.stashKey);
+  const slice = retrieveLines(result.stashKey, 120, 80);
+}
+```
+
+For source code, logs, search results, diffs, and line-based plain text, omission notices can point directly to the stash file and exact line range:
+
+```text
+// ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
+```
+
+An agent that shares the filesystem can read that range directly. Otherwise, expose `retrieve` or `retrieveLines` through your own tool or application flow. sift does not inject a retrieval tool into the model automatically.
+
+## Content-aware compression
+
+| Input | What sift keeps or simplifies |
+| --- | --- |
+| JSON arrays | Schema, representative samples, and important/error records |
+| Build and test logs | Commands, errors, stack traces, and summaries |
+| grep / ripgrep results | The most useful matches, grouped with source context |
+| Unified diffs | Representative hunks and change structure |
+| Source code | Signatures and structure while folding eligible function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
+| Plain text | Exact duplicate blocks within the same section; unique facts remain visible |
+| Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
+
+HTML currently passes through unchanged.
+
+## Designed for safe adoption
+
+sift follows three non-negotiable rules:
+
+1. It compresses inside individual messages; it never drops whole messages across the conversation.
+2. It does not modify the frozen prefix through the last Anthropic `cache_control` anchor.
+3. Every lossy transformation stores the original before publishing the compressed output.
+
+Additional safeguards protect tool-call/result pairs, custom XML tags, and high-entropy strings that may contain credentials. If compression does not save tokens, or if the stash write fails, sift returns the original content.
+
+## Where it fits
+
+Call `siftRequest` as the last middleware step before an outbound LLM request. It is especially useful for:
+
+- coding agents that repeatedly carry build output, searches, and diffs;
+- long-running assistants with large tool responses;
+- gateways serving both Anthropic and OpenAI request formats;
+- local or server-side workflows where the model can request omitted source details later.
+
+Use `siftText` when you have one raw string rather than a complete request body.
+
+## API at a glance
+
+```ts
+siftRequest(body, query?)
+siftText(text, query?, sourcePath?)
+retrieve(key)
+retrieveLines(key, startLine, lineCount)
+createSift({ stashDir })
+detectContentType(text)
+detectRequestFormat(body)
+```
+
+See the [Node.js package documentation](npm/core/README.md) for return types, request-format details, and complete behavior.
+
+## Operational notes
+
+- The default file stash is `~/.sift/stash`; set `SIFT_STASH_DIR` or use `createSift({ stashDir })` to choose another directory.
+- Stash entries expire after 30 minutes and are removed lazily when read. Plan retrieval and retention accordingly.
+- A local stash is shared by processes on one machine, not automatically across a cluster. Use a shared filesystem or implement a shared `StashStore` backend for multi-host deployments.
+- `tokensSaved` is an estimate, intended for observability rather than billing reconciliation.
+- The Node.js package provides prebuilt x64 and arm64 binaries for macOS, Linux (GNU and musl), and Windows. Linux GNU builds target a glibc 2.28 baseline.
+
+## Contributing
+
+Build instructions, architecture rules, test requirements, and the release workflow are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[Apache-2.0](LICENSE)。
+[Apache-2.0](LICENSE)

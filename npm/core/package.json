@@ -1,11 +1,12 @@
 {
   "name": "@agent-context/sift",
   "version": "0.0.1-alpha.7",
-  "description": "LLM 上下文压缩核心（Rust sift 的 Node 绑定）",
+  "description": "Compress LLM tool output, reduce context tokens, and recover lossy originals from a local stash.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "README.zh-CN.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -16,6 +17,7 @@
     "build": "npm run build:native && npm run build:ts",
     "clean": "rm -rf dist dist-test dist-demo platforms",
     "demo": "npm run build:ts && tsc -p tsconfig.demo.json && node dist-demo/demo/index.js",
+    "benchmark": "npm run build:ts && tsc -p tsconfig.demo.json && node dist-demo/demo/benchmark.js",
     "test": "npm run build && tsc -p tsconfig.test.json && node dist-test/smoke.test.js",
     "prepublishOnly": "npm run build:cross && npm run build:ts"
   },
@@ -46,6 +48,24 @@
     "node": ">= 10"
   },
   "license": "Apache-2.0",
+  "homepage": "https://github.com/agents-sdk/sift#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agents-sdk/sift.git"
+  },
+  "bugs": {
+    "url": "https://github.com/agents-sdk/sift/issues"
+  },
+  "keywords": [
+    "llm",
+    "context-compression",
+    "prompt-optimization",
+    "ai-agent",
+    "token-optimization",
+    "anthropic",
+    "openai",
+    "rust"
+  ],
   "optionalDependencies": {
     "@agent-context/sift-darwin-arm64": "0.0.1-alpha.7",
     "@agent-context/sift-darwin-x64": "0.0.1-alpha.7",

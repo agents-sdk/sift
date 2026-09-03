@@ -1,0 +1,213 @@
+# sift
+
+**送信するコンテキストを減らし、原文にはいつでも戻れるように。**
+
+sift は、大きなツール出力を LLM に送信する前に圧縮します。トークン使用量とプロンプトキャッシュのコストを抑えながら、非可逆圧縮された原文をローカル stash から復元できます。圧縮エンジンは Rust 製で、Node.js 向けに [`@agent-context/sift`](npm/core/README.md) として提供されています。
+
+[English](README.md) · [简体中文](README.zh-CN.md) · 日本語 · [Español](README.es.md)
+
+### **コンテキストを 60.6% 削減。推定 10,548 トークンを節約。非可逆ベンチマークはすべて復元成功。**
+
+8 つの内蔵ベンチマーク全体で **58,017 B から 22,859 B** へ削減し、**非可逆 4/4 ケースで原文の復元に成功**しました。[測定結果の詳細を見る。](#どれくらい削減できるか)
+
+```sh
+npm install @agent-context/sift
+```
+
+ステータス：**Alpha** · 1.0 までは API の詳細が変わる可能性があります · [運用上の注意](#運用上の注意)
+
+## sift を使う理由
+
+エージェントの会話は、ビルドログ、検索結果、diff、ソースコード、JSON レスポンスによって急速に大きくなります。しかし、その中で次の推論に本当に必要な情報は一部だけです。毎ターン全文を送り直すとトークンを消費し、重要なコンテキストの余地も減ります。
+
+sift が提供するもの：
+
+- **コンテキストコストの削減** — 内蔵ベンチマークでは 58,017 バイトから 22,859 バイトへ、**60.6% 削減**しました。
+- **重要な情報を優先** — エラー、スタックトレース、コマンド、関連する検索結果、構造情報を見える状態に保ちます。
+- **復元可能な圧縮** — 非可逆な結果を返す前に原文全体を保存し、`<<stash:HASH>>` マーカーを付けます。
+- **プロンプトキャッシュを保護** — Anthropic の `cache_control` アンカー以前のメッセージには触れません。
+- **1 か所で統合** — Anthropic Messages、OpenAI Chat Completions、OpenAI Responses を自動判定します。
+- **Rust コアとシンプルな API** — コンパイルされた圧縮ロジックを小さな Node.js API から利用できます。
+
+### 単純な切り捨てより有用で、一方向の要約より安全
+
+| 方法 | 内容を認識 | 原文を復元 | Anthropic キャッシュ接頭辞を保護 | 効果がない結果を拒否 |
+| --- | :---: | :---: | :---: | :---: |
+| 単純な切り捨て | いいえ | いいえ | 必ずしも | いいえ |
+| LLM 要約 | 一部 | 通常不可 | 必ずしも | いいえ |
+| **sift** | **はい** | **はい** | **はい** | **はい** |
+
+## どれくらい削減できるか
+
+リポジトリ内の固定された 8 つの [demo 入力](npm/core/demo/cases)を、公開済みパッケージ `0.0.1-alpha.7` で測定した結果です。測定方法と再現手順は [BENCHMARK.md](BENCHMARK.md) を参照してください：
+
+| シナリオ | 入力 | 出力 | サイズ削減 | 推定節約トークン | 復元 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| JSON 配列 | 18,397 B | 2,975 B | 83.8% | 4,627 | PASS |
+| Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | ロスレス |
+| ビルドログ | 3,073 B | 1,543 B | 49.8% | 459 | ロスレス |
+| 検索結果 | 10,057 B | 2,863 B | 71.5% | 2,159 | PASS |
+| Git diff | 8,201 B | 8,201 B | 0% | 0 | 変更なし |
+| 混合コマンド出力 | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
+| Rust ソースコード | 2,282 B | 350 B | 84.7% | 580 | PASS |
+| 固有内容のプレーンテキスト | 3,125 B | 3,125 B | 0% | 0 | 変更なし |
+| **合計** | **58,017 B** | **22,859 B** | **60.6%** | **10,548** | **非可逆 4/4 件を復元** |
+
+これは公開 fixture の透明な測定結果であり、すべてのワークロードに対する保証ではありません。変更なしの 2 件も意図的に掲載しています。sift は結果が小さくなる場合だけ圧縮を採用し、保守的なプレーンテキスト処理では固有の事実を削除しません。`tokensSaved` は sift 内蔵の推定値です。実際のトークン数と削減量はモデルの tokenizer と入力データによって変わります。
+
+## クイックスタート
+
+```sh
+npm install @agent-context/sift
+```
+
+LLM リクエストを送信する直前に圧縮します：
+
+```ts
+import OpenAI from "openai";
+import { siftRequest } from "@agent-context/sift";
+
+const openai = new OpenAI();
+const request = {
+  model: "gpt-5.6-sol",
+  input: conversationWithLargeToolOutputs,
+};
+
+const result = siftRequest(request, currentUserQuestion);
+const response = await openai.responses.create(result.body as any);
+
+console.log({
+  changed: result.changed,
+  tokensSaved: result.tokensSaved,
+  blocksCompressed: result.blocksCompressed,
+});
+```
+
+`siftRequest` が変更するのは対象となるツール出力だけです。system、user、assistant のプロンプトはデフォルトで保護されます。
+
+単独のツール結果やファイルを圧縮する場合：
+
+```ts
+import { siftText } from "@agent-context/sift";
+
+const result = siftText(
+  fileContents,
+  currentUserQuestion,
+  "src/services/OrderService.java", // 任意：言語判定を安定させます
+);
+
+console.log(result.text);
+console.log(result.tokensSaved);
+```
+
+512 バイト未満の入力はそのまま返されるため、各ブロックを事前選別せず一般的なリクエスト経路に組み込めます。
+
+### モデルに見える内容
+
+以下は効果のイメージです。何百、何千行もの反復を次のターンへ持ち越さず、重要な構造と原文へ戻る経路を残します：
+
+```diff
+- 2,000 行のコマンド、反復ステータス、スタックトレース
++ $ cargo test --workspace
++ error[E0382]: borrow of moved value: `request`
++   --> src/client.rs:84:17
++ [... 1,962 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 19]
++ test result: FAILED. 127 passed; 1 failed
++ <<stash:HASH>>
+```
+
+エラーと要約は表示されたままです。省略行は stash マーカーまたは正確なファイル範囲から取得できます。
+
+## 原文を復元する
+
+非可逆圧縮では、結果を返す前に入力全体が必ず stash に保存されます。出力には次のようなマーカーが付きます：
+
+```text
+<<stash:8f1c2e...>>
+```
+
+原文全体、または必要な行だけを取得できます：
+
+```ts
+import { retrieve, retrieveLines, siftText } from "@agent-context/sift";
+
+const result = siftText(longToolOutput, currentUserQuestion);
+
+if (result.stashKey) {
+  const original = retrieve(result.stashKey);
+  const slice = retrieveLines(result.stashKey, 120, 80);
+}
+```
+
+ソースコード、ログ、検索結果、diff、行単位のプレーンテキストでは、省略箇所から stash ファイルと正確な行範囲を直接参照できます：
+
+```text
+// ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
+```
+
+同じファイルシステムを使うエージェントは、その範囲を直接読めます。それ以外では、アプリケーションや独自ツールから `retrieve` / `retrieveLines` を公開してください。sift 自体はモデルへ取得ツールを自動注入しません。
+
+## 内容に応じた圧縮
+
+| 入力 | sift が保持・簡略化する内容 |
+| --- | --- |
+| JSON 配列 | スキーマ、代表サンプル、重要レコード、エラーレコード |
+| ビルド・テストログ | コマンド、エラー、スタックトレース、要約 |
+| grep / ripgrep 結果 | ソースの文脈とともに整理された有用な一致 |
+| Unified diff | 代表的な hunk と変更構造 |
+| ソースコード | シグネチャと構造を保持し、対象の関数本体を折りたたむ。Python、JavaScript、TypeScript、Go、Rust、Java、C、C++ に対応 |
+| プレーンテキスト | 同じセクション内の完全な重複ブロックのみ。固有の事実は残す |
+| 整形済み JSON・反復ログ | 可能ならロスレスな minify またはテンプレート化 |
+
+HTML は現在そのまま返されます。
+
+## 安全に導入するための設計
+
+sift には 3 つの不変ルールがあります：
+
+1. 圧縮は各メッセージ内だけで行い、会話からメッセージ全体を削除しません。
+2. Anthropic の `cache_control` アンカー以前にある凍結プレフィックスを変更しません。
+3. 非可逆変換では、圧縮結果を返す前に必ず原文の保存を完了します。
+
+さらに、ツール呼び出しと結果の対応、カスタム XML タグ、認証情報の可能性がある高エントロピー文字列を保護します。トークンが減らない場合や stash への書き込みに失敗した場合は原文を返します。
+
+## どこに組み込むか
+
+`siftRequest` は、LLM への送信直前に実行される最後のミドルウェアとして配置するのがおすすめです。特に次の用途に向いています：
+
+- ビルド出力、検索結果、diff を何度も保持するコーディングエージェント
+- 大きなツールレスポンスを扱う長時間のアシスタント
+- Anthropic と OpenAI の両形式を扱うゲートウェイ
+- 省略した詳細をモデルが後から要求できるローカル／サーバーワークフロー
+
+完全なリクエストではなく 1 つの文字列を扱う場合は `siftText` を使います。
+
+## API 一覧
+
+```ts
+siftRequest(body, query?)
+siftText(text, query?, sourcePath?)
+retrieve(key)
+retrieveLines(key, startLine, lineCount)
+createSift({ stashDir })
+detectContentType(text)
+detectRequestFormat(body)
+```
+
+戻り値の型、リクエスト形式、詳しい挙動は [Node.js パッケージのドキュメント](npm/core/README.md)を参照してください。
+
+## 運用上の注意
+
+- デフォルトの stash は `~/.sift/stash` です。`SIFT_STASH_DIR` または `createSift({ stashDir })` で変更できます。
+- stash エントリは 30 分後に期限切れとなり、読み取り時に遅延削除されます。復元と保持の設計に注意してください。
+- ローカル stash は同一マシンのプロセス間では共有できますが、クラスタには自動共有されません。複数ホストでは共有ファイルシステムまたは共有 `StashStore` バックエンドが必要です。
+- `tokensSaved` は観測用の推定値であり、請求照合用ではありません。
+- Node.js パッケージには macOS、Linux（GNU / musl）、Windows 向けの x64 / arm64 バイナリが含まれます。Linux GNU ビルドの基準は glibc 2.28 です。
+
+## コントリビューション
+
+ビルド手順、アーキテクチャのルール、テスト要件、リリースフローは [CONTRIBUTING.md](CONTRIBUTING.md) にまとめています。
+
+## ライセンス
+
+[Apache-2.0](LICENSE)

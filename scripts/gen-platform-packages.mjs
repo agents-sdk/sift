@@ -80,7 +80,7 @@ for (const file of nodes) {
         main: 'index.js',
         files: [file, 'LICENSE', 'NOTICE'],
         license,
-        description: `@agent-context/sift 的 ${platform} 原生二进制`,
+        description: `Native ${platform} binary for @agent-context/sift`,
       },
       null,
       2,
