@@ -20,6 +20,10 @@ npm install @agent-context/sift
 
 Prebuilt x64 and arm64 binaries are available for macOS, Linux (GNU and musl), and Windows.
 
+### Pi and OpenCode
+
+Ready-made adapters are available for [Pi](https://github.com/earendil-works/pi) (`@agent-context/pi-sift`) and [OpenCode](https://github.com/anomalyco/opencode) (`@agent-context/opencode-sift`). They compress tool results automatically and expose `sift_retrieve` to the agent. See [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins) for setup and configuration.
+
 ## Quick start
 
 Place `siftRequest` immediately before your existing LLM API call:

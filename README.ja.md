@@ -16,6 +16,15 @@ npm install @agent-context/sift
 
 ステータス：**Alpha** · 1.0 までは API の詳細が変わる可能性があります · [運用上の注意](#運用上の注意)
 
+## すぐに使えるエージェント統合
+
+[Pi](https://github.com/earendil-works/pi) または [OpenCode](https://github.com/anomalyco/opencode) を利用している場合は、対応するアダプターをそのままインストールできます。新しいツール出力を自動的に圧縮し、必要に応じて stash の原文を取得する `sift_retrieve` ツールをエージェントに登録します：
+
+- **Pi：** `pi install npm:@agent-context/pi-sift`
+- **OpenCode：** `opencode.json` の `plugin` 配列に `["@agent-context/opencode-sift", { "minLength": 200 }]` を追加
+
+インストール、設定、ストレージ、トラブルシューティングの詳細は [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins) を参照してください。
+
 ## sift を使う理由
 
 エージェントの会話は、ビルドログ、検索結果、diff、ソースコード、JSON レスポンスによって急速に大きくなります。しかし、その中で次の推論に本当に必要な情報は一部だけです。毎ターン全文を送り直すとトークンを消費し、重要なコンテキストの余地も減ります。

@@ -16,6 +16,15 @@ npm install @agent-context/sift
 
 Estado: **Alpha** · Los detalles de la API pueden cambiar antes de 1.0 · [Notas operativas](#notas-operativas)
 
+## Integraciones listas para usar
+
+Si usas [Pi](https://github.com/earendil-works/pi) u [OpenCode](https://github.com/anomalyco/opencode), puedes instalar su adaptador directamente. Cada adaptador comprime automáticamente las nuevas salidas de herramientas y registra `sift_retrieve` para que el agente recupere el original del stash cuando lo necesite:
+
+- **Pi:** `pi install npm:@agent-context/pi-sift`
+- **OpenCode:** añade `["@agent-context/opencode-sift", { "minLength": 200 }]` al array `plugin` de `opencode.json`
+
+Consulta [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins) para ver la instalación, configuración, almacenamiento y resolución de problemas.
+
 ## ¿Por qué sift?
 
 Las conversaciones de los agentes crecen rápidamente con logs de compilación, resultados de búsqueda, diffs, código fuente y respuestas JSON. Normalmente, solo una parte de esos datos es relevante para el siguiente razonamiento. Reenviar todo en cada turno consume tokens y desplaza contexto más importante.

@@ -16,6 +16,15 @@ npm install @agent-context/sift
 
 状态：**Alpha** · 1.0 前 API 细节可能变化 · [运行注意事项](#运行注意事项)
 
+## 现成的 Agent 集成
+
+如果使用 [Pi](https://github.com/earendil-works/pi) 或 [OpenCode](https://github.com/anomalyco/opencode)，可以直接安装对应适配器。它们会自动压缩新产生的工具输出，并注册 `sift_retrieve` 工具，让 Agent 在需要时取回 stash 中的原文：
+
+- **Pi：**`pi install npm:@agent-context/pi-sift`
+- **OpenCode：**在 `opencode.json` 的 `plugin` 数组中加入 `["@agent-context/opencode-sift", { "minLength": 200 }]`
+
+完整安装、配置、存储和排障说明见 [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins)。
+
 ## 为什么使用 sift？
 
 Agent 对话很容易被构建日志、搜索结果、diff、源码和 JSON 响应撑大。这些内容通常重复很多，真正影响下一步推理的信息却只占一小部分。每轮都重新发送完整内容，不仅消耗 token，也会挤占更重要的上下文。

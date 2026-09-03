@@ -12,6 +12,22 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <h2>安装</h2>
     <CodeBlock code={`npm install @agent-context/sift`} lang="bash" command />
 
+    <h2>直接接入 Pi / OpenCode</h2>
+    <p>如果使用 Pi 或 OpenCode，无需自己编写 hook：现成适配器会自动压缩新产生的工具输出，并注册 <code>sift_retrieve</code>，让 Agent 在需要时取回 stash 原文。</p>
+
+    <h3>Pi</h3>
+    <CodeBlock code={`pi install npm:@agent-context/pi-sift`} lang="bash" command />
+
+    <h3>OpenCode</h3>
+    <p>在用户级或项目级 <code>opencode.json</code> 中加入：</p>
+    <CodeBlock code={`{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    ["@agent-context/opencode-sift", { "minLength": 200 }]
+  ]
+}`} lang="json" />
+    <p>完整安装、配置、stash 存储与排障说明见 <a href="https://github.com/agents-sdk/sift-plugins">agents-sdk/sift-plugins</a>。</p>
+
     <h2>最小示例</h2>
     <CodeBlock code={`import { createSift, siftRequest, siftText, retrieve, retrieveLines } from "@agent-context/sift";
 

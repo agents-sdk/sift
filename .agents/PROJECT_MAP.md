@@ -103,6 +103,13 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
 > token 估算不对外暴露：它在 Rust 侧 `tokenizer::EstimatingCounter`（UTF-8 字节 / 4 × 1.2）
 > 内部使用，作为 live-zone 压缩后「token 不减则回退」的校验。
 
+## 宿主集成
+
+- [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins) 提供已发布的 Pi 扩展
+  `@agent-context/pi-sift` 与 OpenCode 插件 `@agent-context/opencode-sift`。
+- 两个适配器负责在宿主的工具结果 hook 中调用 `siftText`，并注册 `sift_retrieve` 供 Agent
+  按需恢复原文；压缩算法仍只位于本仓库的 `crates/sift`。
+
 ## 压缩管线（已实现）
 
 ```

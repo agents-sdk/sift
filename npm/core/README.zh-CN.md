@@ -26,6 +26,10 @@ npm install @agent-context/sift
 
 发布包支持 macOS、Linux 与 Windows 的 x64/arm64；Linux 同时提供 GNU 与 musl 变体。
 
+### Pi 与 OpenCode
+
+[Pi](https://github.com/earendil-works/pi)（`@agent-context/pi-sift`）和 [OpenCode](https://github.com/anomalyco/opencode)（`@agent-context/opencode-sift`）已有现成适配器。它们会自动压缩工具输出，并向 Agent 提供 `sift_retrieve`。安装与配置说明见 [agents-sdk/sift-plugins](https://github.com/agents-sdk/sift-plugins)。
+
 ## 运行场景演示
 
 仓库内提供了覆盖 JSON 数组、pretty JSON、构建日志、搜索结果、git diff、混合命令
