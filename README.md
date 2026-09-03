@@ -19,7 +19,7 @@ Status: **Alpha** · API details may change before 1.0 · [Operational notes](#o
 Ready-made adapters compress tool results automatically and let the agent retrieve stashed originals:
 
 - **Pi:** `pi install npm:@agent-context/pi-sift`
-- **OpenCode:** `@agent-context/opencode-sift`
+- **OpenCode:** `opencode plugin @agent-context/opencode-sift`
 
 [Setup and configuration →](https://github.com/agents-sdk/sift-plugins)
 
