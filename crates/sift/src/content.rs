@@ -6,7 +6,7 @@
 //!
 //! 分发顺序（与参考实现一致）：
 //! 1. 空 / 纯空白 → PlainText（confidence 0.0）
-//! 2. JSON 数组（最高优先级，confidence 1.0 / 0.8）
+//! 2. JSON 对象/数组（含连续对象与 JSON 为主体的轻量 wrapper）
 //! 3. git diff（confidence ≥ 0.7）
 //! 4. HTML（confidence ≥ 0.7）
 //! 5. grep/ripgrep 搜索结果（confidence ≥ 0.6）
@@ -76,14 +76,82 @@ pub fn detect_content_type(text: &str) -> ContentType {
 
 // ─── JSON ─────────────────────────────────────────────────────────────
 
-/// JSON 数组检测：去除空白后以 `[` 开头且能整体解析为数组。
-/// （参考实现只认数组；JSON 对象会继续走后续判据。）
-fn try_detect_json(text: &str) -> bool {
+#[derive(Debug)]
+pub(crate) struct JsonPayload {
+    pub value: Value,
+    pub start: usize,
+    pub end: usize,
+    pub normalized: bool,
+}
+
+/// 解析结构化 JSON payload。除完整对象/数组外，还接受空白分隔的连续对象，
+/// 以及 JSON 占去空白后文本至少 60% 的轻量 wrapper。
+pub(crate) fn parse_json_payload(text: &str) -> Option<JsonPayload> {
     let trimmed = text.trim();
-    if !trimmed.starts_with('[') {
-        return false;
+    if trimmed.is_empty() {
+        return None;
     }
-    matches!(serde_json::from_str::<Value>(trimmed), Ok(v) if v.is_array())
+    let trim_start = text.len() - text.trim_start().len();
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.is_array() || value.is_object() {
+            return Some(JsonPayload {
+                value,
+                start: trim_start,
+                end: trim_start + trimmed.len(),
+                normalized: false,
+            });
+        }
+        return None;
+    }
+
+    if trimmed.starts_with('{') {
+        let mut values = Vec::new();
+        for value in serde_json::Deserializer::from_str(trimmed).into_iter::<Value>() {
+            let Ok(value) = value else {
+                values.clear();
+                break;
+            };
+            if !value.is_object() {
+                values.clear();
+                break;
+            }
+            values.push(value);
+        }
+        if values.len() >= 2 {
+            return Some(JsonPayload {
+                value: Value::Array(values),
+                start: trim_start,
+                end: trim_start + trimmed.len(),
+                normalized: true,
+            });
+        }
+    }
+
+    let relative_start = [trimmed.find('{'), trimmed.find('[')]
+        .into_iter()
+        .flatten()
+        .min()?;
+    let mut stream =
+        serde_json::Deserializer::from_str(&trimmed[relative_start..]).into_iter::<Value>();
+    let value = stream.next()?.ok()?;
+    if !value.is_array() && !value.is_object() {
+        return None;
+    }
+    let relative_end = relative_start + stream.byte_offset();
+    if relative_end - relative_start < trimmed.len() * 3 / 5 {
+        return None;
+    }
+    Some(JsonPayload {
+        value,
+        start: trim_start + relative_start,
+        end: trim_start + relative_end,
+        normalized: true,
+    })
+}
+
+fn try_detect_json(text: &str) -> bool {
+    parse_json_payload(text).is_some()
 }
 
 // ─── git diff ─────────────────────────────────────────────────────────
@@ -720,9 +788,42 @@ mod tests {
     }
 
     #[test]
-    fn json_object_not_array() {
-        // 参考实现只认数组，对象落到后续判据
-        assert_eq!(detect_content_type(r#"{"id": 1}"#), ContentType::PlainText);
+    fn json_object_is_structured_json() {
+        assert_eq!(detect_content_type(r#"{"id": 1}"#), ContentType::JsonArray);
+    }
+
+    #[test]
+    fn concatenated_json_objects_are_structured_json() {
+        assert_eq!(
+            detect_content_type(r#"{"id":1} {"id":2} {"id":3}"#),
+            ContentType::JsonArray
+        );
+        let payload = parse_json_payload(r#"{"id":1} {"id":2}"#).unwrap();
+        assert!(payload.normalized);
+        assert_eq!(payload.value.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn json_dominant_wrapper_is_structured_json() {
+        let text = format!(
+            "Exit code: 0\n{}\ndone",
+            r#"{"rows":[1,2,3],"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}"#
+        );
+        assert_eq!(detect_content_type(&text), ContentType::JsonArray);
+        let payload = parse_json_payload(&text).unwrap();
+        assert_eq!(
+            &text[payload.start..payload.end],
+            serde_json::to_string(&payload.value).unwrap()
+        );
+    }
+
+    #[test]
+    fn small_json_mention_inside_prose_is_not_structured_json() {
+        let text = format!(
+            "This prose explains an example {{\"id\":1}} without being a JSON payload. {}",
+            "more prose ".repeat(20)
+        );
+        assert_eq!(detect_content_type(&text), ContentType::PlainText);
     }
 
     #[test]

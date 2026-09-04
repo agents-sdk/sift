@@ -1519,8 +1519,37 @@ fn process_value(
             }
             (Value::Object(out), infos.join(","))
         }
+        Value::String(text) => {
+            let Some(compressed) = compress_prose_leaf(text, query) else {
+                return (value.clone(), String::new());
+            };
+            (Value::String(compressed), "prose_field".to_string())
+        }
         other => (other.clone(), String::new()),
     }
+}
+
+/// 结构化结果中的长纯文本字段走抽取式 TextCrusher。整个 JSON block 的原文由
+/// live zone 统一写 stash，因此字段级压缩不额外生成嵌套 marker。
+fn compress_prose_leaf(text: &str, query: Option<&str>) -> Option<String> {
+    const MIN_PROSE_BYTES: usize = 256;
+    if text.len() < MIN_PROSE_BYTES
+        || crate::content::detect_content_type(text) != ContentType::PlainText
+    {
+        return None;
+    }
+    let crusher = super::text_crusher::TextCrusher::new(super::text_crusher::TextCrusherConfig {
+        conservative: false,
+        target_ratio: 0.4,
+        min_segments_for_crush: 4,
+        ..Default::default()
+    });
+    let ctx = CompressionContext {
+        query: query.map(str::to_string),
+        ..CompressionContext::default()
+    };
+    let output = crusher.apply(text, &ctx).ok()?;
+    (output.compressed.len() < text.len()).then_some(output.compressed)
 }
 
 /// 构造 dropped 标注哨兵：策略 / 原始行数 / 丢弃行数 / 丢弃行采样 /
@@ -1605,12 +1634,12 @@ impl SmartCrusher {
         content: &str,
         query: Option<&str>,
     ) -> Result<(String, bool), TransformError> {
-        let parsed: Value =
-            serde_json::from_str(content.trim()).map_err(|_| TransformError::InvalidInput)?;
-        let (processed, _info) = process_value(&parsed, 0, query, &self.config);
+        let payload =
+            crate::content::parse_json_payload(content).ok_or(TransformError::InvalidInput)?;
+        let (processed, _info) = process_value(&payload.value, 0, query, &self.config);
         let compact = serde_json::to_string(&processed)
             .map_err(|e| TransformError::Internal(e.to_string()))?;
-        let was_modified = compact != content.trim();
+        let was_modified = payload.normalized || compact != content[payload.start..payload.end];
         Ok((compact, was_modified))
     }
 }
@@ -1649,17 +1678,25 @@ impl OffloadTransform for SmartCrusher {
         input: &str,
         ctx: &CompressionContext,
     ) -> Result<OffloadOutput, TransformError> {
+        let payload =
+            crate::content::parse_json_payload(input).ok_or(TransformError::InvalidInput)?;
         let (compact, was_modified) = self.crush(input, ctx.query.as_deref())?;
         if !was_modified {
             // 无压缩空间（太小 / 不可压 / 输出等价）：交给上层走原样。
             return Err(TransformError::Skipped);
         }
-        // 人类可读：pretty-print 输出，原文原样返回给 offload store。
-        let parsed: Value =
-            serde_json::from_str(&compact).map_err(|e| TransformError::Internal(e.to_string()))?;
-        let pretty = serde_json::to_string_pretty(&parsed)
-            .map_err(|e| TransformError::Internal(e.to_string()))?;
-        Ok(OffloadOutput::new(pretty, input.to_string()))
+        // 与 Headroom 一致输出紧凑 JSON；pretty-print 会在短字段较多时吞掉
+        // SmartCrusher 的行采样收益，导致最终 token 校验回退。
+        let compressed = if payload.start == 0 && payload.end == input.len() {
+            compact
+        } else {
+            let mut output = String::with_capacity(input.len());
+            output.push_str(&input[..payload.start]);
+            output.push_str(&compact);
+            output.push_str(&input[payload.end..]);
+            output
+        };
+        Ok(OffloadOutput::new(compressed, input.to_string()))
     }
 }
 
@@ -1810,15 +1847,19 @@ mod tests {
             result.compressed.contains("_dropped_sample"),
             "必须带 dropped 采样"
         );
-        assert!(
-            result.compressed.contains("\"status\": \"error\""),
-            "错误行必须在输出中"
-        );
         // status 直方图：丢弃行全是 ok。
         assert!(result.compressed.contains("_dropped_field_summary"));
         // 输出是合法 JSON 数组。
         let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
         assert!(parsed.is_array());
+        assert!(
+            parsed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["status"] == json!("error")),
+            "错误行必须在输出中"
+        );
     }
 
     #[test]
@@ -2045,6 +2086,45 @@ mod tests {
             "嵌套的错误行必须保留"
         );
         assert_eq!(parsed["total"], json!(41));
+    }
+
+    #[test]
+    fn apply_concatenated_objects_normalizes_and_crushes() {
+        let input = (0..40)
+            .map(|i| format!(r#"{{"id":{i},"status":"ok"}}"#))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = crusher().apply(&input, &ctx(None)).unwrap();
+        let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
+        assert!(parsed.is_array());
+        assert!(result.compressed.contains("_dropped_count"));
+    }
+
+    #[test]
+    fn apply_preserves_wrapper_around_json_object() {
+        let rows: Vec<Value> = (0..40).map(|i| json!({"id": i, "status": "ok"})).collect();
+        let json = serde_json::to_string(&json!({"rows": rows})).unwrap();
+        let input = format!("Exit code: 0\n{json}\ndone");
+        let result = crusher().apply(&input, &ctx(None)).unwrap();
+        assert!(result.compressed.starts_with("Exit code: 0\n{"));
+        assert!(result.compressed.ends_with("\ndone"));
+        assert!(result.compressed.contains("_dropped_count"));
+    }
+
+    #[test]
+    fn apply_compresses_long_prose_field_inside_object() {
+        let prose = (0..30)
+            .map(|i| format!("Sentence {i} explains distributed state reconciliation topic {i}."))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let input = serde_json::to_string(&json!({"answer": prose, "id": 7})).unwrap();
+        let result = crusher()
+            .apply(&input, &ctx(Some("distributed reconciliation")))
+            .unwrap();
+        let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
+        let answer = parsed["answer"].as_str().unwrap();
+        assert!(answer.len() < prose.len() / 2, "{}", result.compressed);
+        assert_eq!(parsed["id"], json!(7));
     }
 
     #[test]

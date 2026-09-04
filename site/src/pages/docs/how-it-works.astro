@@ -33,7 +33,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <h2>压缩器类型</h2>
     <table>
       <tr><th>内容类型</th><th>压缩器</th><th>策略</th><th>无损?</th></tr>
-      <tr><td>json_array</td><td>SmartCrusher</td><td>schema 去重 + 采样 + 关键行保留(错误行优先)</td><td>可无损(minify)或有损</td></tr>
+      <tr><td>json_array</td><td>SmartCrusher</td><td>对象/数组递归压缩,连续对象规范化,长 prose 字段抽取,schema 去重 + 采样 + 错误行优先</td><td>可无损(minify)或有损</td></tr>
       <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
       <tr><td>git_diff</td><td>DiffNoise + DiffCompressor</td><td>lockfile / 纯空白变化摘要,unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>

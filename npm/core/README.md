@@ -89,7 +89,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 | Input | What remains visible |
 | --- | --- |
-| JSON arrays | Schema, representative samples, important and error records |
+| JSON objects and arrays | Compact encoding, nested prose compression, representative samples, important and error records; concatenated or lightly wrapped JSON is recognized |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |

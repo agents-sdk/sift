@@ -83,7 +83,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <h3>把大文件喂给 LLM</h3>
     <p>分析线上问题、读监控数据时,原始文件往往几十 KB 起步。先 <code>siftText</code> 再送入:</p>
     <ul>
-      <li><strong>监控 / 导出的 JSON 数组</strong>:schema 去重 + 采样,异常行优先保留;</li>
+      <li><strong>监控 / 导出的 JSON 对象与数组</strong>:递归 schema 去重 + 采样,异常行优先保留,连续对象也会规范化处理;</li>
       <li><strong>构建 / 测试日志</strong>:错误与堆栈全保留,重复 warning 折叠成一条;</li>
       <li><strong>git diff</strong>:lockfile / 纯空白变化摘要,hunk 采样,改动行保留;</li>
       <li><strong>会议纪要等长文本</strong>:完整段落/发言块保守去重,只折叠同章节完全相同的块;独有内容保留,没有明确重复则原样返回。</li>
@@ -117,7 +117,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <p>按 stash 原文的 1-based 行号读取连续分片,单次最多 1000 行;返回 <code>text / startLine / lineCount / totalLines / hasMore</code>。这是非本地 stash 或文件工具不可用时的备选;代码内联提示本身不要求调用这个 API。</p>
 
     <h3><code>detectContentType(text)</code> / <code>detectRequestFormat(body)</code></h3>
-    <p>类型探测:返回内容类型(JSON 数组 / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
+    <p>类型探测:返回内容类型(JSON 对象或数组,也识别连续对象与 JSON 为主体的轻量 wrapper / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
 
     <h2>最佳实践</h2>
     <ul>

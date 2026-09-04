@@ -18,7 +18,7 @@ crates/
       policy.rs           # AuthMode / CompressionPolicy / 缓存成本乘数
       cache_control.rs    # compute_frozen_count：冻结消息下界
       safety.rs           # tool_use/tool_result 配对保护
-      content.rs          # ContentType + detect_content_type（分发键，完整移植）
+      content.rs          # ContentType + detect_content_type（对象/数组/连续/轻量包裹 JSON）
       stash.rs              # StashStore trait + FileStashStore(落盘) / InMemoryStashStore(测试) + compute_key
       secrets.rs          # 熵检测保密（归一化 Shannon 熵 ≥0.85 + 长度 ≥20 → 不可丢弃）
       mixed_content.rs    # 混合内容分段路由（split_into_sections）
@@ -29,7 +29,7 @@ crates/
         mod.rs            # ReformatTransform / OffloadTransform traits + dispatch
         line_omissions.rs # 按原始行坐标渲染共享内联提示，短空隙保留，分段行偏移换算
         log_context.rs    # 日志首行/命令回显/显式续行保护，模板化与有损选择共用
-        smart_crusher.rs  # JSON 数组统计压缩（schema 去重/采样/关键行保留）
+        smart_crusher.rs  # JSON 对象/数组递归压缩（schema 去重/采样/prose 字段）
         log_compressor.rs # 构建/测试日志压缩（错误/堆栈/摘要保留）
         search_compressor.rs # grep/ripgrep 搜索结果抽稀
         diff_compressor.rs   # unified diff hunk 采样
@@ -124,7 +124,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
       1. 无损 reformat（reformat_for：JsonMinifier / LogTemplate）
          └ 缩到 ≤80% 体积即短路——不写 stash、无标记、可完全重建
       2. 整块检测 → compressor_for
-          JsonArray     → smart_crusher
+          JsonArray     → smart_crusher（对象/数组递归处理，连续对象规范化，长 prose 字段抽取）
          BuildOutput   → log_compressor
                          （首个非空行、可识别命令及续行强制保留，不受普通行数预算截断或模板化）
           SearchResults → search_compressor

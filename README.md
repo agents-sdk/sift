@@ -142,7 +142,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 
 | Input | What sift keeps or simplifies |
 | --- | --- |
-| JSON arrays | Schema, representative samples, and important/error records |
+| JSON objects and arrays | Compact encoding, nested prose compression, representative samples, and important/error records; concatenated or lightly wrapped JSON is recognized |
 | Build and test logs | Commands, errors, stack traces, and summaries |
 | grep / ripgrep results | The most useful matches, grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
