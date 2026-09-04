@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 60.6% menos de contexto. 10,548 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 61.8% menos de contexto. 13,497 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los ocho escenarios incluidos pasan de **58,017 B a 22,859 B**, con recuperación correcta del original en **4/4 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los ocho escenarios incluidos pasan de **72,823 B a 27,833 B**, con recuperación correcta del original en **5/5 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 60.6% más pequeño**, pasando de 58,017 a 22,859 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 61.8% más pequeño**, pasando de 72,823 a 27,833 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -55,14 +55,14 @@ Resultados medidos con las ocho [entradas de demo](npm/core/demo/cases) determin
 | Array JSON | 18,397 B | 2,975 B | 83.8% | 4,627 | PASS |
 | Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | Sin pérdida |
 | Log de compilación | 3,073 B | 1,543 B | 49.8% | 459 | Sin pérdida |
-| Resultados de búsqueda | 10,057 B | 2,863 B | 71.5% | 2,159 | PASS |
-| Git diff | 8,201 B | 8,201 B | 0% | 0 | Sin cambios |
+| Resultados de búsqueda | 10,057 B | 3,227 B | 67.9% | 2,049 | PASS |
+| Git diff | 23,007 B | 12,759 B | 44.5% | 3,075 | PASS |
 | Salida de comandos mixta | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
-| Código fuente Rust | 2,282 B | 350 B | 84.7% | 580 | PASS |
+| Código fuente Rust | 2,282 B | 402 B | 82.4% | 564 | PASS |
 | Texto plano con datos únicos | 3,125 B | 3,125 B | 0% | 0 | Sin cambios |
-| **Total** | **58,017 B** | **22,859 B** | **60.6%** | **10,548** | **4/4 casos con pérdida recuperados** |
+| **Total** | **72,823 B** | **27,833 B** | **61.8%** | **13,497** | **5/5 casos con pérdida recuperados** |
 
-Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los dos casos sin cambios se incluyen deliberadamente: sift solo publica un resultado si es menor, y la compresión conservadora de texto plano conserva los datos únicos. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
+Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. El único caso sin cambios se incluye deliberadamente: la compresión conservadora de texto plano conserva los datos únicos. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
 
 ## Inicio rápido
 

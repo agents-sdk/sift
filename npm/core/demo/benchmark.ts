@@ -87,6 +87,18 @@ const rows: Row[] = cases.map((demo) => {
     recovery = 'PASS';
   }
 
+  for (const expected of demo.mustContain ?? []) {
+    assert.ok(output.includes(expected), `${demo.id}: 压缩结果缺少关键文本 ${expected}`);
+  }
+  if (demo.expectedPath === 'lossy-stash') {
+    assert.ok(result.changed, `${demo.id}: 预期有损压缩，实际原样返回`);
+    assert.ok(keys.length > 0, `${demo.id}: 预期生成 stash 标记`);
+  } else if (demo.expectedPath === 'changed') {
+    assert.ok(result.changed, `${demo.id}: 预期内容发生变化`);
+  } else {
+    assert.ok(!result.changed, `${demo.id}: 预期原样返回`);
+  }
+
   const before = Buffer.byteLength(demo.input);
   const after = Buffer.byteLength(output);
   return {

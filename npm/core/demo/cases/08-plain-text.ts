@@ -19,10 +19,10 @@ for (let i = 0; i < 12; i++) {
 export const plainTextCase: DemoCase = {
   id: 'plain-text',
   title: '长纯文本 + 高熵敏感值',
-  description: '按段落和 query 压缩，同时强制保留疑似凭据等高熵文本。',
+  description: '验证保守策略原样保留独有段落和疑似凭据等高熵文本。',
   input: paragraphs.join('\n\n'),
   query: 'rate limits',
   expectedType: 'plain_text',
-  expectedPath: 'lossy-stash',
+  expectedPath: 'unchanged',
   mustContain: ['Rate limits apply', 'api_key=sk-demo-'],
 };

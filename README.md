@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **60.6% less context · ~10,548 tokens saved · 4/4 lossy cases recovered**
+### **61.8% less context · ~13,497 tokens saved · 5/5 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -46,9 +46,9 @@ Eight deterministic [demo inputs](npm/core/demo/cases), measured with the publis
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 58,017 B | 22,859 B | 60.6% | 10,548 | 4/4 restored |
+| 72,823 B | 27,833 B | 61.8% | 13,497 | 5/5 restored |
 
-Two cases were intentionally unchanged, showing that sift rejects compression with no savings and preserves unique facts. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
+One case is intentionally unchanged, showing that sift preserves unique facts under its conservative plain-text policy. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
 ## Quick start
 
