@@ -1,3 +1,4 @@
+import * as assert from 'node:assert';
 import type { DemoCase } from '../types';
 
 // 模拟 API / 数据库工具返回的大型 issue 列表。
@@ -16,5 +17,8 @@ export const jsonArrayCase: DemoCase = {
   query: 'list open issues and worker pool panics',
   expectedType: 'json_array',
   expectedPath: 'lossy-stash',
-  mustContain: ['panic in worker pool', '"state": "open"'],
+  mustContain: ['panic in worker pool'],
+  verify(output) {
+    assert.match(output, /"state"\s*:\s*"open"/);
+  },
 };

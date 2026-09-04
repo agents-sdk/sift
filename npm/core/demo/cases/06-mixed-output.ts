@@ -17,7 +17,7 @@ export const mixedOutputCase: DemoCase = {
   description: '分段识别嵌入的大 JSON，同时保留 JSON 外部的命令文本。',
   input,
   query: 'find unhealthy pods',
-  expectedType: 'plain_text',
+  expectedType: 'json_array',
   expectedPath: 'lossy-stash',
   mustContain: ['$ kubectl get pods -o json', 'TOTAL: 200 pods listed', 'CrashLoopBackOff'],
 };
