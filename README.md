@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **62.3% less context · ~14,129 tokens saved · 6/6 lossy cases recovered**
+### **71.3% less context · ~16,161 tokens saved · 6/6 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -42,13 +42,13 @@ Build logs, search results, diffs, source files, and JSON can quickly crowd usef
 
 ## Benchmark
 
-Nine deterministic [demo inputs](npm/core/demo/cases), measured with the published `0.0.1-alpha.7` package:
+Nine deterministic [demo inputs](npm/core/demo/cases), measured from the current source tree (package version `0.0.1-alpha.7`):
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 75,546 B | 28,447 B | 62.3% | 14,129 | 6/6 restored |
+| 75,546 B | 21,672 B | 71.3% | 16,161 | 6/6 restored |
 
-One case is intentionally unchanged, showing that sift preserves unique facts under its conservative plain-text policy. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
+One case is intentionally unchanged because its credential-like value triggers the global safety gate. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
 ## Quick start
 
@@ -147,7 +147,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 | grep / ripgrep results | The most useful matches, grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
 | Source code | Signatures and structure while folding eligible function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
-| Plain text | Exact duplicate blocks within the same section; unique facts remain visible |
+| Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
 
 HTML currently passes through unchanged.

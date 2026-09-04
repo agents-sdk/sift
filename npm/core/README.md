@@ -6,9 +6,9 @@
 
 English · [简体中文](README.zh-CN.md) · [Project overview](../../README.md)
 
-### **62.3% smaller across the nine bundled benchmark scenarios**
+### **71.3% smaller across the nine bundled benchmark scenarios**
 
-**75,546 B → 28,447 B** · **~14,129 estimated tokens saved** · **6/6 lossy benchmark cases restored successfully**
+**75,546 B → 21,672 B** · **~16,161 estimated tokens saved** · **6/6 lossy benchmark cases restored successfully**
 
 See the [methodology and complete results](../../BENCHMARK.md). Status: **Alpha**; API details may change before 1.0.
 
@@ -94,7 +94,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
 | Source code | Signatures and structure; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
-| Plain text | Exact duplicate blocks within a section; unique facts remain visible |
+| Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 
 Pretty JSON and repetitive logs may be reformatted losslessly. HTML currently passes through unchanged.
 
@@ -113,7 +113,7 @@ if (result.stashKey) {
 }
 ```
 
-For source code, logs, search output, and line-based text, omission notices can point directly to the local stash:
+For source code, logs, search output, and conservative line-based text, omission notices can point directly to the local stash. Default plain-text extraction works at sentence granularity, so it does not claim line ranges it cannot map reliably:
 
 ```text
 // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32

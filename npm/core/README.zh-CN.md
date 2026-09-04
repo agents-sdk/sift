@@ -6,9 +6,9 @@
 
 [English](README.md) · 简体中文 · [项目主页](../../README.zh-CN.md)
 
-### **9 个内置基准场景整体缩小 62.3%**
+### **9 个内置基准场景整体缩小 71.3%**
 
-**75,546 B → 28,447 B** · **估算节省约 14,129 tokens** · **6/6 个有损基准样例成功恢复**
+**75,546 B → 21,672 B** · **估算节省约 16,161 tokens** · **6/6 个有损基准样例成功恢复**
 
 测试口径与完整结果见 [BENCHMARK.md](../../BENCHMARK.md)。当前状态：**Alpha**，1.0 前 API 细节可能变化。
 
@@ -138,7 +138,7 @@ const fragment = result.stashKey ? sift.retrieveLines(result.stashKey, 120, 80) 
 `lineCount` 必须在 1–1000 之间；返回的 `text` 保留命中范围内的原始 LF / CRLF。
 越过原文末尾时返回实际可用行数，起始行越界、key 不存在或已过期时返回 `null`。
 
-使用落盘 stash 时，源码、搜索结果、日志、Git Diff 和整行纯文本的实际省略点会就地输出
+使用落盘 stash 时，源码、搜索结果、日志、Git Diff 和显式保守模式整行纯文本的实际省略点会就地输出
 `[... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32]`，代码使用注释形式：
 `// ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32`。
 路径是规范化后的绝对路径，`starting at line` 是 1-based 起始行，前面的数字是连续省略行数；
@@ -155,10 +155,9 @@ JSON 结构采样、行内片段和 tag protect 改变映射的情况暂不标�
 压缩单个字符串（不包请求体），适合在把工具输出原文送进任意 API / 存储之前处理。
 行片段提示不依赖 `sourcePath`：有损管线从 `FileStashStore` 取得完整原文的绝对文件路径，并在
 省略点写明省略行数和 1-based 起始行，不把同一行内的句子计作多行。
-纯文本默认按完整段落/发言块保守去重，只折叠同章节完全相同的块，保留第一份及全部独有内容。
-不同编号、数字、状态或发言人的内容不因句式相似而合并；标题、代码围栏、可识别的命令和结论块保留。
-query 和目标比例不会让纯文本删除独有事实；没有明确重复，或省略提示抵消收益时，原样返回。
-折叠会省略重复次数和位置，因此仍属于有损压缩，完整原文保存在 stash 中。
+纯文本默认按句子或段落切分，综合 query 的 BM25 相关性、位置、数字/错误/标识符等显著信息打分，
+并抑制近重复片段。输出只抽取原文片段，不生成摘要；被省略的内容属于有损压缩，完整原文保存在 stash 中。
+默认句子抽取无法可靠映射成原始行范围，因此不伪造行片段提示，只通过末尾 stash 标记恢复。
 可选的 `sourcePath` 仅用于通过扩展名直接选择对应的
 tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java、C、C++；因此
 只有一个长函数、特征行占比很低的文件也能稳定进入源码压缩。

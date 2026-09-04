@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 62.3% menos de contexto. 14,129 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 71.3% menos de contexto. 16,161 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los nueve escenarios incluidos pasan de **75,546 B a 28,447 B**, con recuperación correcta del original en **6/6 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los nueve escenarios incluidos pasan de **75,546 B a 21,672 B**, con recuperación correcta del original en **6/6 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 62.3% más pequeño**, pasando de 75,546 a 28,447 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 71.3% más pequeño**, pasando de 75,546 a 21,672 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -48,22 +48,22 @@ sift ofrece:
 
 ## ¿Cuánto puede ahorrar?
 
-Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el paquete publicado `0.0.1-alpha.7`. Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
+Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el árbol de fuentes actual (versión del paquete `0.0.1-alpha.7`). Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
 
 | Escenario | Entrada | Salida | Reducción | Tokens ahorrados estimados | Recuperación |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Array JSON | 18,397 B | 2,975 B | 83.8% | 4,627 | PASS |
+| Array JSON | 18,397 B | 1,888 B | 89.7% | 4,953 | PASS |
 | Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | Sin pérdida |
 | Log de compilación | 3,073 B | 1,543 B | 49.8% | 459 | Sin pérdida |
 | Resultados de búsqueda | 10,057 B | 3,227 B | 67.9% | 2,049 | PASS |
-| Git diff | 23,007 B | 12,759 B | 44.5% | 3,075 | PASS |
-| Salida de comandos mixta | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
+| Git diff | 23,007 B | 7,795 B | 66.1% | 4,564 | PASS |
+| Salida de comandos mixta | 9,240 B | 1,037 B | 88.8% | 2,460 | PASS |
 | Código fuente Rust | 2,282 B | 402 B | 82.4% | 564 | PASS |
-| Texto plano repetido | 2,723 B | 614 B | 77.5% | 632 | PASS |
+| Texto plano repetido | 2,723 B | 454 B | 83.3% | 680 | PASS |
 | Protección de datos únicos y valores sensibles | 3,125 B | 3,125 B | 0% | 0 | Sin cambios |
-| **Total** | **75,546 B** | **28,447 B** | **62.3%** | **14,129** | **6/6 casos con pérdida recuperados** |
+| **Total** | **75,546 B** | **21,672 B** | **71.3%** | **16,161** | **6/6 casos con pérdida recuperados** |
 
-Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. El único caso sin cambios se incluye deliberadamente: la compresión conservadora de texto plano conserva los datos únicos. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
+Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. El único caso sin cambios contiene un valor similar a una credencial y activa la protección global. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
 
 ## Inicio rápido
 
@@ -166,7 +166,7 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 | Resultados de grep / ripgrep | Coincidencias útiles agrupadas con su contexto de código |
 | Unified diffs | Hunks representativos y estructura de los cambios |
 | Código fuente | Firmas y estructura, plegando cuerpos aptos; compatible con Python, JavaScript, TypeScript, Go, Rust, Java, C y C++ |
-| Texto plano | Bloques exactamente duplicados dentro de la misma sección; los datos únicos permanecen visibles |
+| Texto plano | Selección extractiva según query, posición y relevancia, con supresión de duplicados cercanos |
 | JSON con formato y logs repetitivos | Minificación o plantillas sin pérdida cuando es suficiente |
 
 Actualmente, HTML se devuelve sin cambios.

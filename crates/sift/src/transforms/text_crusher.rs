@@ -1,11 +1,10 @@
-//! TextCrusher：默认保守的完整文本块去重；原文经 stash 恢复。
+//! TextCrusher：默认按 relevance / recency / salience 抽取长文本；原文经 stash 恢复。
 
 //!
 //! # 算法
 //!
-//! 默认策略只折叠同章节内完整相同的段落/发言块，保留第一份及全部独有内容。
-//! 不按 query、位置或预算删独有事实，具体分块规则在 text_blocks 模块。
-//! 以下评分算法仅用于 Rust 调用方显式设置 `conservative: false` 的旧策略：
+//! 默认评分算法把纯文本切分为段落/句子并按目标比例抽取；调用方显式设置
+//! `conservative: true` 时只折叠同章节内完整相同的段落/发言块。
 //! 把纯文本切分为「段落 / 句子」段，对每段用三因子打分：
 //!
 //! 1. **recency**：越靠后的段落权重越高（`(i+1)/n`）；
@@ -45,10 +44,10 @@ use crate::transforms::{CompressionContext, OffloadOutput, OffloadTransform, Tra
 
 // ────────────────────────────── 配置 ──────────────────────────────
 
-/// TextCrusher 配置：默认完整块去重，其余评分/预算字段仅在 conservative=false 时生效。
+/// TextCrusher 配置：默认抽取式压缩；`conservative=true` 切换到完整块去重。
 #[derive(Debug, Clone)]
 pub struct TextCrusherConfig {
-    /// 默认只去重完整相同块。设 false 才启用旧的激进评分抽取；npm 不暴露此开关。
+    /// true 时只去重完整相同块；false 时启用评分抽取。
     pub conservative: bool,
     /// 大致保留的字符比例（0.0-1.0）。
     pub target_ratio: f64,
@@ -71,9 +70,9 @@ pub struct TextCrusherConfig {
 
 impl Default for TextCrusherConfig {
     fn default() -> Self {
-        // 旧评分策略的参数保持兼容；默认改用保守策略。
+        // 默认值对齐 Headroom TextCrusher 的抽取式生产路径。
         TextCrusherConfig {
-            conservative: true,
+            conservative: false,
             target_ratio: 0.5,
             w_recency: 1.0,
             w_relevance: 2.0,
@@ -136,7 +135,7 @@ impl TextCrusher {
         )
     }
 
-    /// 压缩入口（比例与 token 上限仅用于显式启用的旧评分策略）。
+    /// 压缩入口，可覆盖默认保留比例与 token 上限。
     pub fn compress_with(
         &self,
         content: &str,
@@ -147,7 +146,7 @@ impl TextCrusher {
         self.compress_with_segments(content, context, target_ratio, max_tokens, false)
     }
 
-    /// 默认保留完整块；旧策略的文件模式以整行为评分/抽取单位。
+    /// 保守模式可按整行选择，从而生成准确的 stash 行范围提示。
     fn compress_with_segments(
         &self,
         content: &str,
@@ -600,7 +599,7 @@ impl OffloadTransform for TextCrusher {
         ContentType::PlainText
     }
 
-    /// 默认按实际重复块估算可丢弃字节比例；旧策略按目标保留比例估算。
+    /// 保守模式按实际重复块估算；默认抽取模式按目标保留比例估算。
     fn estimate_bloat(&self, input: &str) -> f64 {
         if input.is_empty() {
             return 0.0;
@@ -632,18 +631,19 @@ impl OffloadTransform for TextCrusher {
         // token 预算优先取调用方上下文，其次取配置。
         let max_tokens = ctx.token_budget.or(self.config.max_tokens);
         let path = super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref());
+        let line_mode = self.config.conservative && path.is_some();
         let result = self.compress_with_segments(
             input,
             query,
             self.config.target_ratio,
             max_tokens,
-            path.is_some(),
+            line_mode,
         );
         // 没丢弃任何段落（透传/太短/比例不满）→ 无压缩空间，交给上层原样。
         if result.kept_segments >= result.total_segments || result.compressed == input {
             return Err(TransformError::Skipped);
         }
-        if let Some(path) = path {
+        if let Some(path) = path.filter(|_| line_mode) {
             return Ok(super::line_omissions::render(
                 input,
                 result.kept_lines,
@@ -661,12 +661,123 @@ impl OffloadTransform for TextCrusher {
 mod tests {
     use super::*;
 
-    // 旧的评分模式仍可由 Rust 显式选择；默认保守策略另有端到端回归。
+    // 明确构造评分模式，避免测试意图依赖默认值。
     fn ranked() -> TextCrusher {
         TextCrusher::new(TextCrusherConfig {
             conservative: false,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn default_mode_is_extractive_like_headroom() {
+        assert!(!TextCrusherConfig::default().conservative);
+    }
+
+    #[test]
+    fn matches_headroom_recorded_outputs() {
+        let prose = (0..30)
+            .map(|i| {
+                format!(
+                    "Sentence number {i} explains how distributed systems reconcile state across topic {i}."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let expected_query = (21..30)
+            .map(|i| {
+                format!(
+                    "Sentence number {i} explains how distributed systems reconcile state across topic {i}."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expected_no_query = (15..30)
+            .map(|i| {
+                format!(
+                    "Sentence number {i} explains how distributed systems reconcile state across topic {i}."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let crusher = TextCrusher::default();
+        assert_eq!(
+            crusher
+                .compress_with(
+                    &prose,
+                    "how do distributed systems reconcile state",
+                    0.3,
+                    None,
+                )
+                .compressed,
+            expected_query
+        );
+        assert_eq!(
+            crusher.compress_with(&prose, "", 0.5, None).compressed,
+            expected_no_query
+        );
+
+        let salient = [
+            "ERROR connection refused at host 10.0.0.42 after 3 retries.",
+            "The authentication module validated tokens against auth.registry before forwarding.",
+            "A traceback was logged with code 500 and request_id req-9182.",
+            "Just some generic filler text without any specific identifiers here.",
+            "More plain filler describing the overall behavior in vague terms.",
+            "Warning: cache hit ratio dropped to 71 percent during the spike.",
+            "Another unremarkable sentence with no salient tokens at all today.",
+            "The pipeline.apply call returned 42 kept rows out of 1000 total.",
+        ]
+        .join("\n");
+        assert_eq!(
+            crusher
+                .compress_with(&salient, "authentication tokens errors", 0.4, None)
+                .compressed,
+            [
+                "The authentication module validated tokens against auth.registry before forwarding.",
+                "Another unremarkable sentence with no salient tokens at all today.",
+                "The pipeline.apply call returned 42 kept rows out of 1000 total.",
+            ]
+            .join("\n")
+        );
+
+        let duplicate = "The quick brown fox jumps over the very lazy dog every single morning.";
+        let unique = (0..8)
+            .map(|i| format!("A distinct fact about subsystem {i} is recorded plainly here."))
+            .collect::<Vec<_>>();
+        let redundant = std::iter::repeat(duplicate)
+            .take(10)
+            .chain(unique.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let expected_redundant = std::iter::once(duplicate)
+            .chain(unique.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            crusher.compress_with(&redundant, "", 0.9, None).compressed,
+            expected_redundant
+        );
+
+        let unicode = (0..12)
+            .map(|i| format!("句子 {i} 描述了系统在主题 {i} 上的行为细节。"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let expected_unicode = (7..12)
+            .map(|i| format!("句子 {i} 描述了系统在主题 {i} 上的行为细节。"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            crusher
+                .compress_with(&unicode, "系统", 0.4, None)
+                .compressed,
+            expected_unicode
+        );
+        assert_eq!(
+            crusher
+                .compress_with("one thing. two thing. three thing.", "", 0.5, None)
+                .compressed,
+            "one thing. two thing. three thing."
+        );
     }
 
     fn doc(n: usize) -> String {
@@ -718,6 +829,21 @@ mod tests {
             .apply(&content, &ctx(None))
             .expect("长文本应可压缩");
         assert!(result.compressed.len() < content.len());
+    }
+
+    #[test]
+    fn extractive_file_output_does_not_claim_line_ranges() {
+        let content = doc(40);
+        let result = TextCrusher::default()
+            .apply(
+                &content,
+                &CompressionContext {
+                    stash_file_path: Some("/tmp/stash/original".into()),
+                    ..Default::default()
+                },
+            )
+            .expect("长文本应可压缩");
+        assert!(!result.compressed.contains("lines omitted from file"));
     }
 
     // ---------- 关键信息保留（query 相关性） ----------

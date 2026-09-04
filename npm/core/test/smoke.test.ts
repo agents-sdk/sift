@@ -62,18 +62,19 @@ const key = compressedContent.slice(
 assert.strictEqual(retrieve(key), bigJson);
 assert.strictEqual(retrieve('../outside-stash'), null, '非法 stash key 必须被拒绝');
 
-// 旧官网纪要的 26 个任务仅句式相似，不是重复段落；query 不能使其丢失。
+// 长纪要按相关性抽取；有损结果必须能从 stash 逐字恢复。
 const oldMeeting = fs.readFileSync(
   path.resolve(__dirname, '../../../crates/sift/tests/fixtures/plain_text_meeting.txt'),
   'utf8',
 );
 const meetingResult = siftText(oldMeeting, '结论 冻结前缀 CCR 发布');
-assert.strictEqual(meetingResult.text, oldMeeting);
-assert.strictEqual(meetingResult.changed, false);
-assert.strictEqual(meetingResult.stashKey, null);
-for (let id = 100; id < 126; id++) assert.ok(meetingResult.text.includes(`COMP-${id}`));
+assert.strictEqual(meetingResult.changed, true);
+assert.strictEqual(meetingResult.lossy, true);
+assert.ok(meetingResult.stashKey);
+assert.ok(meetingResult.text.includes('结论'));
+assert.strictEqual(retrieve(meetingResult.stashKey!), oldMeeting);
 
-// 整块重复才有损折叠，坐标直接指向 stash 文件，无需调用召回接口。
+// 重复纯文本按句段抽取，不为句子级删除伪造整行坐标。
 const plainRepeat = '例行同步：当前仍在等待依赖团队确认，处理方式保持不变。\n这是一段重复状态播报，没有新的任务、决定或处理结果。';
 const repeatedProse = [
   '周会纪要', plainRepeat, plainRepeat, plainRepeat, plainRepeat,
@@ -81,19 +82,13 @@ const repeatedProse = [
   'Bob: COMP-101 未完成，失败数为 2。',
   '结论：修复失败后再发布。',
 ].join('\n\n');
-const proseResult = siftText(repeatedProse, 'unrelated');
+const proseResult = siftText(repeatedProse, 'COMP-101 结论');
 assert.strictEqual(proseResult.lossy, true);
 assert.ok(proseResult.stashKey);
-assert.strictEqual(proseResult.text.split(plainRepeat).length - 1, 1);
-assert.ok(proseResult.text.startsWith('周会纪要\n'));
-for (const fact of ['COMP-100 已完成，失败数为 0', 'COMP-101 未完成，失败数为 2', '结论：修复失败后再发布。']) {
-  assert.ok(proseResult.text.includes(fact));
-}
-const proseHint = /\[\.\.\. (\d+) lines omitted from file ("(?:\\.|[^"\\])*"), starting at line (\d+)\]/.exec(proseResult.text);
-assert.ok(proseHint);
-assert.strictEqual(Number(proseHint![1]), 9, '3 个重复的 2 行段落及其空行');
-assert.strictEqual(Number(proseHint![3]), 6, '省略从第二份段落开始');
-assert.strictEqual(fs.readFileSync(JSON.parse(proseHint![2]), 'utf8'), repeatedProse);
+assert.ok(proseResult.text.includes('COMP-101'));
+assert.ok(proseResult.text.includes('结论'));
+assert.ok(!proseResult.text.includes('lines omitted from file'));
+assert.strictEqual(retrieve(proseResult.stashKey!), repeatedProse);
 
 // 即使 siftText 没有文件路径，行范围明确的代码压缩也会直接引用 stash，
 // 并可只召回对应分片。

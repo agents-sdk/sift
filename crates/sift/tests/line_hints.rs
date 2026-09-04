@@ -204,7 +204,7 @@ fn diff_prefers_compact_native_summary_when_per_gap_paths_are_larger() {
 }
 
 #[test]
-fn prose_maps_whole_lines_without_treating_sentences_as_lines() {
+fn default_prose_does_not_claim_whole_line_ranges() {
     let input = (0..60)
         .map(|_| {
             format!(
@@ -218,7 +218,8 @@ fn prose_maps_whole_lines_without_treating_sentences_as_lines() {
         .unwrap()
         .apply(&input, &context())
         .unwrap();
-    assert_line_roundtrip(&input, &result.compressed);
+    assert!(result.compressed.len() < input.len());
+    assert!(!result.compressed.contains("lines omitted from file"));
 }
 
 #[test]
@@ -267,7 +268,6 @@ fn file_backed_pipeline_and_mixed_sections_use_the_complete_stash_coordinates() 
         &serde_json::to_string(path.to_str().unwrap()).unwrap(),
         &serde_json::to_string(PATH).unwrap(),
     );
-    assert_line_roundtrip(&input, &normalized);
     assert!(
         normalized.contains("starting at line 806"),
         "日志分段必须使用完整 stash 的行号"
@@ -284,8 +284,10 @@ fn single_line_prose_does_not_invent_sentence_line_numbers() {
     let input = "A long prose sentence with routine progress details. ".repeat(50);
     let output = compressor_for(ContentType::PlainText)
         .unwrap()
-        .apply(&input, &context());
-    assert!(output.is_err(), "单行内句子删除不应冒充整行省略");
+        .apply(&input, &context())
+        .unwrap();
+    assert!(output.compressed.len() < input.len());
+    assert!(!output.compressed.contains("lines omitted from file"));
 }
 
 #[test]
@@ -300,5 +302,5 @@ fn whole_line_chinese_prose_is_not_mistaken_for_a_secret() {
         output.compressed.len() < input.len() / 2,
         "普通中文不应被当作密钥全部强制保留"
     );
-    assert_line_roundtrip(&input, &output.compressed);
+    assert!(!output.compressed.contains("lines omitted from file"));
 }

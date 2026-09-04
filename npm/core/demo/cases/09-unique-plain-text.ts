@@ -19,7 +19,7 @@ for (let i = 0; i < 12; i++) {
 export const uniquePlainTextCase: DemoCase = {
   id: 'unique-plain-text',
   title: '独有事实与敏感值保护',
-  description: '验证保守策略原样保留独有段落和疑似凭据等高熵文本。',
+  description: '验证含疑似凭据的工具输出在压缩前由全局安全门原样保护。',
   input: paragraphs.join('\n\n'),
   query: 'rate limits',
   expectedType: 'plain_text',

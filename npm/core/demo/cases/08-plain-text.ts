@@ -14,15 +14,19 @@ const paragraphs = [
 export const plainTextCase: DemoCase = {
   id: 'plain-text',
   title: '重复纯文本',
-  description: '折叠同一章节内逐字相同的完整段落，保留首份与独有结论。',
+  description: '按相关性、位置与显著信息抽取长文本，重复内容只保留代表片段。',
   input: paragraphs.join('\n\n'),
   query: 'compatibility failures',
   expectedType: 'plain_text',
   expectedPath: 'lossy-stash',
-  mustContain: ['Weekly engineering status report', repeatedStatus, 'Conclusion:'],
+  mustContain: [
+    'Weekly engineering status report',
+    'compatibility test matrix completed successfully',
+    'Conclusion:',
+  ],
   verify: (output) => {
-    if (output.split(repeatedStatus).length - 1 !== 1) {
-      throw new Error('重复状态段落应只保留首份');
+    if (output.split('compatibility test matrix completed successfully').length - 1 !== 1) {
+      throw new Error('重复状态信息应只保留一份代表片段');
     }
   },
 };
