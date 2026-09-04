@@ -36,7 +36,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <tr><td>json_array</td><td>SmartCrusher</td><td>schema 去重 + 采样 + 关键行保留(错误行优先)</td><td>可无损(minify)或有损</td></tr>
       <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
-      <tr><td>git_diff</td><td>DiffCompressor</td><td>unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
+      <tr><td>git_diff</td><td>DiffNoise + DiffCompressor</td><td>lockfile / 纯空白变化摘要,unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
       <tr><td>plain_text</td><td>TextCrusher</td><td>完整段落/发言块保守去重,同章节完全相同的块保留首份</td><td>有损(可恢复)</td></tr>
       <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,签名保留、函数体折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>html</td><td>—</td><td>检测支持,压缩当前 no-op</td><td>—</td></tr>
@@ -51,7 +51,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <li><strong>混合内容</strong>同一 block 内含多种类型时,分段路由到各自的压缩器;嵌入的 JSON span 走递归平衡匹配。</li>
       <li><strong>日志执行上下文</strong>:首个非空行、可识别的命令回显及显式续行强制可见,不参与模板化、去重或普通日志行数预算竞争;省略提示不能代替命令本身。</li>
       <li><strong>stash 恢复</strong>:一切有损输出的原文都在 stash store,输出留 <code>«stash:HASH»</code> 标记;<code>retrieve(key)</code> 取回全文,<code>retrieveLines(key, startLine, lineCount)</code> 按行取回分片。</li>
-      <li><strong>内联切片提示</strong>:本地落盘模式下,源码、搜索、日志、diff 和整行纯文本共用省略提示,就地写入 stash 绝对文件路径、省略行数和 1-based 起始行。搜索和 diff 在解析时保留输入坐标,输出按原序回放;可验证的混合整行分段累加偏移。无损重排收益不足时,有损阶段使用原文视图以避免坐标漂移。短空隙不值得添加提示时直接保留。JSON 结构采样、行内片段、tag protect 改变映射、内存/远程 stash 等情况暂不标注。</li>
+      <li><strong>内联切片提示</strong>:本地落盘模式下,源码、搜索、日志和整行纯文本共用省略提示,就地写入 stash 绝对文件路径、省略行数和 1-based 起始行。搜索在解析时保留输入坐标,输出按原序回放;可验证的混合整行分段累加偏移。diff 会比较逐段路径提示与原生文件/hunk 汇总的体积,避免短上下文空隙反而放大输出,完整原文仍由末尾 stash 标记恢复。无损重排收益不足时,有损阶段使用原文视图以避免坐标漂移。短空隙不值得添加提示时直接保留。JSON 结构采样、行内片段、tag protect 改变映射、内存/远程 stash 等情况暂不标注。</li>
     </ul>
 
     <h2>走一个真实例子</h2>

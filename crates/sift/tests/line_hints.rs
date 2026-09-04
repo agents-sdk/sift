@@ -168,7 +168,7 @@ fn lossless_log_templates_also_leave_repeated_command_echoes_visible() {
 }
 
 #[test]
-fn diff_hints_cover_context_hunks_and_dropped_files() {
+fn diff_prefers_compact_native_summary_when_per_gap_paths_are_larger() {
     let mut input = "commit metadata\n".to_string();
     for f in 0..4 {
         input.push_str(&format!(
@@ -196,8 +196,11 @@ fn diff_hints_cover_context_hunks_and_dropped_files() {
         ..Default::default()
     });
     let result = transform.apply(&input, &context()).unwrap();
-    assert_line_roundtrip(&input, &result.compressed);
-    assert!(!result.omissions.is_empty());
+    assert!(result.compressed.len() < input.len() / 10);
+    assert!(result.compressed.starts_with("commit metadata\n"));
+    assert!(result.compressed.contains("-old implementation"));
+    assert!(result.compressed.contains("12 hunks omitted"));
+    assert!(result.omissions.is_empty());
 }
 
 #[test]

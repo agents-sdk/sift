@@ -1078,18 +1078,42 @@ impl OffloadTransform for DiffCompressorTransform {
         ctx: &CompressionContext,
     ) -> Result<OffloadOutput, TransformError> {
         let context = ctx.query.as_deref().unwrap_or("");
-        let result = self.compressor.compress(input, context);
+        let noise_compacted = super::diff_noise::compact(input);
+        let compressor_input = noise_compacted.as_deref().unwrap_or(input);
+        let result = if noise_compacted.is_some() {
+            // 外层 live zone 会对完整原文统一写 stash；这里关闭中间文本的内部
+            // hash 标记，避免输出一个无法从 store 取回的临时 key。
+            let mut config = self.compressor.config().clone();
+            config.enable_stash = false;
+            DiffCompressor::new(config).compress(compressor_input, context)
+        } else {
+            self.compressor.compress(input, context)
+        };
+        let native_compressed = if result.compressed.len() < compressor_input.len() {
+            result.compressed.clone()
+        } else {
+            compressor_input.to_string()
+        };
+        if noise_compacted.is_some() {
+            return Ok(OffloadOutput::new(native_compressed, input.to_string()));
+        }
         if let Some(path) =
             super::line_omissions::actionable_file_path(ctx.stash_file_path.as_deref())
         {
-            return Ok(super::line_omissions::render(
+            let rendered = super::line_omissions::render(
                 input,
-                result.retained_lines,
+                result.retained_lines.iter().copied(),
                 path,
                 ctx.stash_line_offset,
-            ));
+            );
+            // diff 的短上下文空隙很多，逐段附加绝对文件路径可能比省略内容更长，
+            // 甚至把所有空隙重新展开。仅当逐行提示确实更短时才采用；否则保留
+            // 压缩器原生的文件/hunk 汇总输出，末尾的全局 stash marker 仍可恢复原文。
+            if rendered.compressed.len() < native_compressed.len() {
+                return Ok(rendered);
+            }
         }
-        Ok(OffloadOutput::new(result.compressed, input.to_string()))
+        Ok(OffloadOutput::new(native_compressed, input.to_string()))
     }
 }
 
@@ -1619,5 +1643,25 @@ mod tests {
         let result = t.apply(short, &CompressionContext::default()).unwrap();
         assert_eq!(result.compressed, short);
         assert_eq!(result.original, short);
+    }
+
+    #[test]
+    fn file_path_hints_do_not_expand_past_native_diff_output() {
+        let t = DiffCompressorTransform::with_defaults();
+        let input = build_synthetic_diff(8);
+        let native = t.apply(&input, &CompressionContext::default()).unwrap();
+        let with_file = t
+            .apply(
+                &input,
+                &CompressionContext {
+                    stash_file_path: Some("/tmp/sift-stash/0123456789abcdef01234567".to_string()),
+                    ..CompressionContext::default()
+                },
+            )
+            .unwrap();
+
+        assert!(with_file.compressed.len() <= native.compressed.len());
+        assert!(with_file.compressed.len() < input.len());
+        assert!(with_file.compressed.contains("[8 files changed"));
     }
 }

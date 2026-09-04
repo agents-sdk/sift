@@ -130,13 +130,13 @@ if (result.stashKey) {
 }
 ```
 
-For source code, logs, search results, diffs, and line-based plain text, omission notices can point directly to the stash file and exact line range:
+For source code, logs, search results, and line-based plain text, omission notices can point directly to the stash file and exact line range:
 
 ```text
 // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
 ```
 
-An agent that shares the filesystem can read that range directly. Otherwise, expose `retrieve` or `retrieveLines` through your own tool or application flow. sift does not inject a retrieval tool into the model automatically.
+An agent that shares the filesystem can read that range directly. Diffs use a compact file/hunk summary when repeating an absolute path for every short context gap would erase the savings; the trailing stash marker still restores the complete diff. Otherwise, expose `retrieve` or `retrieveLines` through your own tool or application flow. sift does not inject a retrieval tool into the model automatically.
 
 ## Content-aware compression
 
@@ -145,7 +145,7 @@ An agent that shares the filesystem can read that range directly. Otherwise, exp
 | JSON arrays | Schema, representative samples, and important/error records |
 | Build and test logs | Commands, errors, stack traces, and summaries |
 | grep / ripgrep results | The most useful matches, grouped with source context |
-| Unified diffs | Representative hunks and change structure |
+| Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
 | Source code | Signatures and structure while folding eligible function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
 | Plain text | Exact duplicate blocks within the same section; unique facts remain visible |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |

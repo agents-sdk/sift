@@ -92,7 +92,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 | JSON arrays | Schema, representative samples, important and error records |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
-| Unified diffs | Representative hunks and change structure |
+| Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
 | Source code | Signatures and structure; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
 | Plain text | Exact duplicate blocks within a section; unique facts remain visible |
 
@@ -113,13 +113,13 @@ if (result.stashKey) {
 }
 ```
 
-For source code, logs, search output, diffs, and line-based text, omission notices can point directly to the local stash:
+For source code, logs, search output, and line-based text, omission notices can point directly to the local stash:
 
 ```text
 // ... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32
 ```
 
-An agent sharing the filesystem can read that range directly. Otherwise, expose `retrieve` or `retrieveLines` through your own application. sift does not inject a retrieval tool into the model.
+An agent sharing the filesystem can read that range directly. Diffs use their compact file/hunk summary when per-gap absolute paths would erase the savings; the trailing stash marker still restores the complete diff. Otherwise, expose `retrieve` or `retrieveLines` through your own application. sift does not inject a retrieval tool into the model.
 
 ## API
 

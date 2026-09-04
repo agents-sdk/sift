@@ -3,6 +3,7 @@
 
 pub mod code_compressor;
 pub mod diff_compressor;
+mod diff_noise;
 mod line_omissions;
 pub mod log_compressor;
 mod log_context;
