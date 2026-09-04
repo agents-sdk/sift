@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 71.3% menos de contexto. 16,161 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 73.4% menos de contexto. 16,637 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los nueve escenarios incluidos pasan de **75,546 B a 21,672 B**, con recuperación correcta del original en **6/6 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los nueve escenarios incluidos pasan de **75,546 B a 20,087 B**, con recuperación correcta del original en **7/7 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 71.3% más pequeño**, pasando de 75,546 a 21,672 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 73.4% más pequeño**, pasando de 75,546 a 20,087 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -60,10 +60,10 @@ Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) determi
 | Salida de comandos mixta | 9,240 B | 1,037 B | 88.8% | 2,460 | PASS |
 | Código fuente Rust | 2,282 B | 402 B | 82.4% | 564 | PASS |
 | Texto plano repetido | 2,723 B | 454 B | 83.3% | 680 | PASS |
-| Protección de datos únicos y valores sensibles | 3,125 B | 3,125 B | 0% | 0 | Sin cambios |
-| **Total** | **75,546 B** | **21,672 B** | **71.3%** | **16,161** | **6/6 casos con pérdida recuperados** |
+| Protección de datos únicos y valores sensibles | 3,125 B | 1,540 B | 50.7% | 476 | PASS |
+| **Total** | **75,546 B** | **20,087 B** | **73.4%** | **16,637** | **7/7 casos con pérdida recuperados** |
 
-Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. El único caso sin cambios contiene un valor similar a una credencial y activa la protección global. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
+Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los valores similares a credenciales permanecen visibles mientras se comprime el resto del contenido de poco valor; todos los casos con pérdida restauran el original completo. `tokensSaved` usa el estimador integrado de sift.
 
 ## Inicio rápido
 

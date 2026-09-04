@@ -6,9 +6,9 @@
 
 English · [简体中文](README.zh-CN.md) · [Project overview](../../README.md)
 
-### **71.3% smaller across the nine bundled benchmark scenarios**
+### **73.4% smaller across the nine bundled benchmark scenarios**
 
-**75,546 B → 21,672 B** · **~16,161 estimated tokens saved** · **6/6 lossy benchmark cases restored successfully**
+**75,546 B → 20,087 B** · **~16,637 estimated tokens saved** · **7/7 lossy benchmark cases restored successfully**
 
 See the [methodology and complete results](../../BENCHMARK.md). Status: **Alpha**; API details may change before 1.0.
 

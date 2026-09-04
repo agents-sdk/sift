@@ -8,8 +8,8 @@
 //!   英文词（如 "detailed"）几乎与真 secret 一样高，长度才是区分信号；该值
 //!   与 secret 扫描器的熵地板一致。
 //!
-//! 用途：压缩器（如 TextCrusher）对含 secret-like token 的段落强制保留，
-//! 保证有损压缩不会丢弃不可重建的凭证内容（不变量 3 的前提）。
+//! 用途：TextCrusher 在段落选择时强制保留 secret-like token；统一压缩管线还会
+//! 在发布有损结果前逐次校验全部候选仍可见，任何缺失都会使该结果回退。
 
 /// secret-like 判定的归一化熵阈值（对齐参考 `EntropyScore.compute` 默认值）。
 pub const SECRET_ENTROPY_THRESHOLD: f64 = 0.85;
@@ -92,6 +92,33 @@ pub fn contains_secret_token_in_source(text: &str) -> bool {
                 .bytes()
                 .any(|byte| byte.is_ascii_digit() || byte == b'_' || byte == b'-')
     })
+}
+
+/// 校验压缩结果仍逐次包含原文中的全部疑似凭据。
+///
+/// Headroom 用字符 mask 钉住高熵词；Sift 的各类型压缩器结构不同，因此在统一
+/// 管线出口做等价的不变量校验。任何一个候选缺失都会拒绝该有损结果。
+pub(crate) fn preserves_secret_tokens(original: &str, compressed: &str, source: bool) -> bool {
+    let is_secret = |candidate: &&str| {
+        is_secret_like(candidate)
+            && (!source
+                || candidate
+                    .bytes()
+                    .any(|byte| byte.is_ascii_digit() || byte == b'_' || byte == b'-'))
+    };
+    let mut required = std::collections::BTreeMap::<&str, usize>::new();
+    for candidate in credential_candidates(original).filter(is_secret) {
+        *required.entry(candidate).or_default() += 1;
+    }
+    if required.is_empty() {
+        return true;
+    }
+    for candidate in credential_candidates(compressed).filter(is_secret) {
+        if let Some(count) = required.get_mut(candidate) {
+            *count = count.saturating_sub(1);
+        }
+    }
+    required.values().all(|count| *count == 0)
 }
 
 fn credential_candidates(text: &str) -> impl Iterator<Item = &str> {
@@ -237,5 +264,23 @@ mod tests {
 
         let with_key = r#"String token = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";"#;
         assert!(contains_secret_token_in_source(with_key));
+    }
+
+    #[test]
+    fn preservation_check_requires_every_secret_occurrence() {
+        let key = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";
+        let original = format!("first {key}\nsecond {key}\nordinary filler");
+        assert!(preserves_secret_tokens(&original, &original, false));
+        assert!(!preserves_secret_tokens(
+            &original,
+            &format!("only one {key}"),
+            false
+        ));
+    }
+
+    #[test]
+    fn source_preservation_ignores_long_identifiers() {
+        let original = "OrderNotFoundException findByUserIdOrderByCreatedAtDesc";
+        assert!(preserves_secret_tokens(original, "folded", true));
     }
 }

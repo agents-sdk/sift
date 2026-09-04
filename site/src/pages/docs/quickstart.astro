@@ -124,7 +124,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
       <li><strong>按需传 query</strong>:用户当前的问题、Agent 当前步骤的意图可帮助相关性筛选,纯文本默认也会使用 query。</li>
       <li><strong>按原文坐标读取</strong>:模型只追问局部时,优先用 Agent 已有的文件分片读取能力;原文不可直接访问时,再用 <code>retrieveLines</code> 从 stash 读取。需要全文时可用 <code>retrieve</code>。</li>
       <li><strong>成对使用实例 API</strong>:通过 <code>createSift</code> 压缩后,必须通过同一实例的 <code>retrieve</code> 恢复;顶层 API 和其他实例可能指向不同目录。</li>
-      <li><strong>不用担心理解偏差</strong>:压缩只发生在消息内部,对话结构、tool_use/tool_result 配对完整保留;API key 等高熵凭证被强制识别并保留。</li>
+      <li><strong>不用担心凭据被隐藏</strong>:压缩只发生在消息内部,对话结构、tool_use/tool_result 配对完整保留;API key 等高熵候选必须逐次留在可见输出中,否则该有损结果会回退。</li>
       <li><strong>短内容不用管</strong>:单 block 小于 512 字节不参与压缩,直接透传,零开销。</li>
     </ul>
 

@@ -245,8 +245,7 @@ pub(crate) fn process_block_text(
         return BlockOutcome::Unchanged;
     }
 
-    // secret 保护必须位于具体压缩器之上，确保 JSON、日志、搜索、diff、代码
-    // 与纯文本走同一条安全规则。宁可少压，也不能把凭证只留在 stash 中。
+    // source_path 可覆盖内容探测；同时决定源码凭据候选的误报抑制规则。
     let path_language = ctx
         .source_path
         .as_deref()
@@ -258,14 +257,7 @@ pub(crate) fn process_block_text(
         } else {
             crate::content::detect_content_type(text)
         };
-    let contains_secret = if original_type == crate::content::ContentType::SourceCode {
-        crate::secrets::contains_secret_token_in_source(text)
-    } else {
-        crate::secrets::contains_secret_token(text)
-    };
-    if contains_secret {
-        return BlockOutcome::Unchanged;
-    }
+    let source_secret_mode = original_type == crate::content::ContentType::SourceCode;
 
     let original_tokens = tokenizer.count_text(text);
 
@@ -336,6 +328,12 @@ pub(crate) fn process_block_text(
         let mut mixed_ctx = compressor_ctx.clone();
         mixed_ctx.source_path = None;
         if let Some(compressed) = route_mixed_fallback(lossy_input, &mixed_ctx) {
+            if !crate::secrets::preserves_secret_tokens(text, &compressed, source_secret_mode) {
+                return match (reformatted, commit_lossless(&current)) {
+                    (true, Some(outcome)) => outcome,
+                    (..) => BlockOutcome::Reverted,
+                };
+            }
             let key = crate::stash::compute_key(text);
             let mut final_text = compressed;
             final_text.push_str(&marker_for(&key));
@@ -380,6 +378,15 @@ pub(crate) fn process_block_text(
         return match (reformatted, commit_lossless(&current)) {
             (true, Some(outcome)) => outcome,
             _ => BlockOutcome::Unchanged,
+        };
+    }
+
+    // 对齐 Headroom 的 entropy mask：允许压缩不含凭据的其余内容，但每个高熵
+    // 候选都必须逐次留在可见输出中；否则拒绝整次有损结果。
+    if !crate::secrets::preserves_secret_tokens(text, &compressed, source_secret_mode) {
+        return match (reformatted, commit_lossless(&current)) {
+            (true, Some(outcome)) => outcome,
+            (..) => BlockOutcome::Reverted,
         };
     }
 
@@ -860,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn secret_in_tool_output_is_protected_before_routing() {
+    fn secret_line_stays_visible_while_other_log_lines_compress() {
         let secret = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";
         let raw = format!(
             "2026-08-24 ERROR credential={secret}\n{}",
@@ -871,12 +878,13 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "t1", "content": raw}
             ]}
         ]});
-        let original = b.clone();
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
-        assert!(!outcome.changed);
-        assert_eq!(b, original);
-        assert!(store.is_empty());
+        assert!(outcome.changed);
+        let compressed = b["messages"][0]["content"][0]["content"].as_str().unwrap();
+        assert!(compressed.contains(secret));
+        let key = crate::stash::compute_key(&raw);
+        assert_eq!(store.get(&key).unwrap(), raw);
     }
 
     #[test]

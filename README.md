@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **71.3% less context · ~16,161 tokens saved · 6/6 lossy cases recovered**
+### **73.4% less context · ~16,637 tokens saved · 7/7 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -46,9 +46,9 @@ Nine deterministic [demo inputs](npm/core/demo/cases), measured from the current
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 75,546 B | 21,672 B | 71.3% | 16,161 | 6/6 restored |
+| 75,546 B | 20,087 B | 73.4% | 16,637 | 7/7 restored |
 
-One case is intentionally unchanged because its credential-like value triggers the global safety gate. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
+Credential-like values remain visible while unrelated text can still be compressed; every lossy case restores the exact original. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
 ## Quick start
 

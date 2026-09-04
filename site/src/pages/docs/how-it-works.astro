@@ -46,6 +46,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <ul>
       <li><strong>相关性 query</strong>:支持相关性筛选的压缩器优先保留相关内容;纯文本默认也使用 query 参与 BM25 相关性评分。</li>
       <li><strong>纯文本抽取</strong>:长文本按句子或段落切分,综合相关性、靠后位置、数字/错误/标识符等显著信息打分,并抑制近重复片段。输出只包含原文片段,被省略的内容通过 stash 恢复。</li>
+      <li><strong>高熵凭据保护</strong>:不再因一个疑似凭据而跳过整块压缩。纯文本会钉住含凭据句段,统一出口还会逐次核对所有高熵候选仍在可见输出中;缺失任一个就拒绝该有损结果。</li>
       <li><strong>保密检测</strong>:归一化 Shannon 熵 ≥0.85 且长度 ≥20 的片段(API key、凭证)强制不可丢弃。</li>
       <li><strong>标签保护</strong>:自定义 XML 标签先占位保护、压缩后恢复,不会被压坏。</li>
       <li><strong>混合内容</strong>同一 block 内含多种类型时,分段路由到各自的压缩器;嵌入的 JSON span 走递归平衡匹配。</li>

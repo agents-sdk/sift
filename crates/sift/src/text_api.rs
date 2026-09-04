@@ -215,6 +215,30 @@ mod tests {
     }
 
     #[test]
+    fn lossy_source_fold_reverts_if_it_would_hide_a_secret() {
+        let secret = "ghp_48xKq2mN7vJz3pLw9RtY5bEcVdXfGaHiQw";
+        let mut raw = "fn deploy() {\n".to_string();
+        for i in 0..50 {
+            if i == 25 {
+                raw.push_str(&format!("    let token = \"{secret}\";\n"));
+            } else {
+                raw.push_str(&format!("    let value_{i} = {i};\n"));
+            }
+        }
+        raw.push_str("}\n");
+        let store = InMemoryStashStore::new();
+        let result = compress_text_with_source_path(
+            &raw,
+            Some(&store),
+            Some("deploy token"),
+            Some("src/deploy.rs"),
+        );
+        assert!(!result.changed, "隐藏凭据的源码折叠必须回退");
+        assert_eq!(result.text, raw);
+        assert!(store.is_empty());
+    }
+
+    #[test]
     fn source_path_routes_all_supported_languages_to_inline_file_slices() {
         fn source(prefix: &str, body: &str, suffix: &str) -> String {
             let mut text = prefix.to_string();

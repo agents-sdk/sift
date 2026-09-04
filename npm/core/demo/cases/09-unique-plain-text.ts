@@ -19,10 +19,10 @@ for (let i = 0; i < 12; i++) {
 export const uniquePlainTextCase: DemoCase = {
   id: 'unique-plain-text',
   title: '独有事实与敏感值保护',
-  description: '验证含疑似凭据的工具输出在压缩前由全局安全门原样保护。',
+  description: '验证疑似凭据始终可见，同时继续压缩其余低价值内容。',
   input: paragraphs.join('\n\n'),
   query: 'rate limits',
   expectedType: 'plain_text',
-  expectedPath: 'unchanged',
+  expectedPath: 'lossy-stash',
   mustContain: ['Rate limits apply', 'Historical note 11', 'api_key=sk-demo-'],
 };

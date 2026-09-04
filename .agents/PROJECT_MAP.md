@@ -20,7 +20,7 @@ crates/
       safety.rs           # tool_use/tool_result 配对保护
       content.rs          # ContentType + detect_content_type（对象/数组/连续/轻量包裹 JSON）
       stash.rs              # StashStore trait + FileStashStore(落盘) / InMemoryStashStore(测试) + compute_key
-      secrets.rs          # 熵检测保密（归一化 Shannon 熵 ≥0.85 + 长度 ≥20 → 不可丢弃）
+      secrets.rs          # 熵检测保密（高熵候选逐次可见性校验，缺失则拒绝有损结果）
       mixed_content.rs    # 混合内容分段路由（split_into_sections）
       recursive_json.rs   # 递归 JSON 路由（块内嵌入 JSON span 平衡匹配 + 替换）
       relevance.rs        # BM25 相关性打分 + rank_by_relevance
@@ -145,9 +145,10 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
          diff 比较逐行提示与原生文件/hunk 汇总的体积，避免重复绝对路径抵消压缩收益；完整原文仍由全局 stash marker 恢复。
          tag_protector::restore 后追加 <<stash:HASH>>。JSON 结构采样、行内片段、标签映射变化、
          内存/远程 store 暂不输出行片段文件提示；不猜测行号或伪造路径
-      4. tokenizer 校验最终文本（含 marker；token ≥ 原值则回退）
-      5. 原文确认写入 stash store 后才发布有损结果；写入失败原样回退
-         （text_crusher 段落选择含 secrets 熵保密：API key 段强制保留）
+      4. secrets 校验有损输出仍逐次包含全部高熵候选；缺失任一凭据则回退
+      5. tokenizer 校验最终文本（含 marker；token ≥ 原值则回退）
+      6. 原文确认写入 stash store 后才发布有损结果；写入失败原样回退
+         （text_crusher 会提前钉住含凭据段，其余压缩器由统一出口校验兜底）
   → LiveZoneOutcome（changed / blocks / tokens_saved / stash_stored）
 ```
 
