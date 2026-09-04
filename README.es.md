@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 73.4% menos de contexto. 16,637 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 73.2% menos de contexto. 16,586 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los nueve escenarios incluidos pasan de **75,546 B a 20,087 B**, con recuperación correcta del original en **7/7 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los nueve escenarios incluidos pasan de **75,546 B a 20,257 B**, con recuperación correcta del original en **7/7 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 73.4% más pequeño**, pasando de 75,546 a 20,087 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 73.2% más pequeño**, pasando de 75,546 a 20,257 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -58,10 +58,10 @@ Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) determi
 | Resultados de búsqueda | 10,057 B | 3,227 B | 67.9% | 2,049 | PASS |
 | Git diff | 23,007 B | 7,795 B | 66.1% | 4,564 | PASS |
 | Salida de comandos mixta | 9,240 B | 1,037 B | 88.8% | 2,460 | PASS |
-| Código fuente Rust | 2,282 B | 402 B | 82.4% | 564 | PASS |
+| Código fuente Rust | 2,282 B | 572 B | 74.9% | 513 | PASS |
 | Texto plano repetido | 2,723 B | 454 B | 83.3% | 680 | PASS |
 | Protección de datos únicos y valores sensibles | 3,125 B | 1,540 B | 50.7% | 476 | PASS |
-| **Total** | **75,546 B** | **20,087 B** | **73.4%** | **16,637** | **7/7 casos con pérdida recuperados** |
+| **Total** | **75,546 B** | **20,257 B** | **73.2%** | **16,586** | **7/7 casos con pérdida recuperados** |
 
 Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los valores similares a credenciales permanecen visibles mientras se comprime el resto del contenido de poco valor; todos los casos con pérdida restauran el original completo. `tokensSaved` usa el estimador integrado de sift.
 
@@ -165,7 +165,7 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 | Logs de compilación y pruebas | Comandos, errores, trazas y resúmenes |
 | Resultados de grep / ripgrep | Coincidencias útiles agrupadas con su contexto de código |
 | Unified diffs | Hunks representativos y estructura de los cambios |
-| Código fuente | Firmas y estructura, plegando cuerpos aptos; compatible con Python, JavaScript, TypeScript, Go, Rust, Java, C y C++ |
+| Código fuente | Firmas, estructura y las primeras cinco líneas de sentencias AST completas antes de plegar el cuerpo; compatible con Python, JavaScript, TypeScript, Go, Rust, Java, C y C++ |
 | Texto plano | Selección extractiva según query, posición y relevancia, con supresión de duplicados cercanos |
 | JSON con formato y logs repetitivos | Minificación o plantillas sin pérdida cuando es suficiente |
 

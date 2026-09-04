@@ -36,7 +36,7 @@ crates/
         diff_noise.rs        # diff 噪声卸载（lockfile / whitespace-only）
         text_crusher.rs   # 默认 BM25/时序/显著性抽取；Rust 可显式 conservative=true 切换完整块去重
         text_blocks.rs    # 保守段落/发言分块，同章节完全相同块保留首份，输出原文行坐标
-        code_compressor.rs   # tree-sitter AST 代码压缩（8 语言，函数体折叠）
+        code_compressor.rs   # tree-sitter AST 代码压缩（8 语言，函数体保留前 5 行完整语句后折叠）
         tag_protector.rs  # 自定义 XML 标签保护/恢复（压缩前 protect 后 restore）
         reformats.rs      # 无损重排：JsonMinifier + LogTemplate（Drain 模板）
       formats/           # 请求格式适配层：检测 + 三格式候选枚举

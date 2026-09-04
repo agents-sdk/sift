@@ -584,7 +584,7 @@ mod tests {
         let stash_path = store.file_path(&stash_key).unwrap();
         let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
         assert!(new_text.contains(&format!(
-            "// ... 41 lines omitted from file {stash_path}, starting at line 4"
+            "// ... 36 lines omitted from file {stash_path}, starting at line 9"
         )));
         assert!(!new_text.contains("[sift: omitted"));
         assert!(!new_text.contains("retrieveLines"));
@@ -622,7 +622,7 @@ mod tests {
         let stash_path = store.file_path(&stash_key).unwrap();
         let stash_path = serde_json::to_string(&stash_path.to_string_lossy()).unwrap();
         assert!(new_text.contains(&format!(
-            "// ... 30 lines omitted from file {stash_path}, starting at line 32"
+            "// ... 26 lines omitted from file {stash_path}, starting at line 36"
         )));
         assert!(!new_text.contains("[sift: omitted"));
         assert!(new_text.len() < code.len());

@@ -106,17 +106,17 @@ assert.strictEqual(sourceResult.lossy, true, '长代码应走有损压缩');
 assert.ok(sourceResult.stashKey);
 assert.ok(
   sourceResult.text.includes(
-    `// ... 41 lines omitted from file ${JSON.stringify(globalStashFile(sourceResult.stashKey!))}, starting at line 4`,
+    `// ... 36 lines omitted from file ${JSON.stringify(globalStashFile(sourceResult.stashKey!))}, starting at line 9`,
   ),
 );
 assert.ok(!sourceResult.text.includes('[sift: omitted'));
 assert.ok(!sourceResult.text.includes('retrieveLines'));
-const sourceSlice = retrieveLines(sourceResult.stashKey!, 4, 41);
+const sourceSlice = retrieveLines(sourceResult.stashKey!, 9, 36);
 assert.ok(sourceSlice);
-assert.strictEqual(sourceSlice!.startLine, 4);
-assert.strictEqual(sourceSlice!.lineCount, 41);
+assert.strictEqual(sourceSlice!.startLine, 9);
+assert.strictEqual(sourceSlice!.lineCount, 36);
 assert.strictEqual(sourceSlice!.totalLines, 45);
-assert.ok(sourceSlice!.text.startsWith('    let value_0 = 0;\n'));
+assert.ok(sourceSlice!.text.startsWith('    let value_5 = 5;\n'));
 assert.ok(sourceSlice!.text.endsWith('    value_39\n'));
 assert.throws(() => retrieveLines(sourceResult.stashKey!, 0, 1), /startLine/);
 assert.throws(() => retrieveLines(sourceResult.stashKey!, 1, 1001), /lineCount/);
@@ -136,18 +136,18 @@ assert.strictEqual(javaResult.lossy, true);
 assert.ok(javaResult.text.includes('public class OrderService'));
 assert.ok(
   javaResult.text.includes(
-    `// ... 30 lines omitted from file ${JSON.stringify(globalStashFile(javaResult.stashKey!))}, starting at line 32`,
+    `// ... 26 lines omitted from file ${JSON.stringify(globalStashFile(javaResult.stashKey!))}, starting at line 36`,
   ),
 );
 assert.ok(!javaResult.text.includes('[sift: omitted'));
 assert.ok(!javaResult.text.includes('retrieveLines'));
 const javaHints = [...javaResult.text.matchAll(/(\d+) lines omitted from file ".+?", starting at line (\d+)/g)];
-assert.strictEqual(javaHints.length, 5, '每个 Java 方法折叠点都应带独立切片坐标');
+assert.strictEqual(javaHints.length, 4, '仅超出完整语句预算的方法应带切片坐标');
 const firstLimit = Number(javaHints[0][1]);
 const firstOffset = Number(javaHints[0][2]);
 const firstSlice = javaDemo.split('\n').slice(firstOffset - 1, firstOffset - 1 + firstLimit);
 assert.strictEqual(firstSlice.length, firstLimit);
-assert.strictEqual(firstSlice[0].trim(), 'validate(request);');
+assert.strictEqual(firstSlice[0].trim(), 'order.setAmount(request.getItems().stream()');
 assert.strictEqual(firstSlice[firstSlice.length - 1]?.trim(), 'return saved;');
 
 // sourcePath 扩展名应让所有 8 种 AST grammar 稳定进入源码压缩，避免长函数因
@@ -172,16 +172,15 @@ for (const [file, prefix, bodyLine, suffix, comment] of languageCases) {
   const result = siftText(languageSource, undefined, sourcePath);
   assert.strictEqual(result.changed, true, `${file} 应进入源码压缩`);
   assert.ok(result.stashKey);
-  assert.ok(
-    result.text.includes(
-      `${comment} ... 36 lines omitted from file ${JSON.stringify(globalStashFile(result.stashKey!))}, starting at line `,
-    ) ||
-      (file === 'demo.py' &&
-        result.text.includes(
-          `${comment} ... 35 lines omitted from file ${JSON.stringify(globalStashFile(result.stashKey!))}, starting at line 2`,
-        )),
+  assert.ok(result.text.includes(bodyLine.split('$i').join('0')), `${file} 应保留开头完整语句`);
+  assert.ok(result.text.includes(bodyLine.split('$i').join('4')), `${file} 应保留 5 行默认预算`);
+  assert.ok(!result.text.includes(bodyLine.split('$i').join('5')), `${file} 不应超出默认预算`);
+  assert.match(
+    result.text,
+    new RegExp(`${comment.replace('/', '\\/')} \\.\\.\\. \\d+ lines omitted from file`),
     `${file} 缺少内联文件切片提示:\n${result.text}`,
   );
+  assert.strictEqual(retrieve(result.stashKey!), languageSource);
 }
 
 const pastedTypeScript =
@@ -196,7 +195,7 @@ assert.strictEqual(pastedTypeScriptResult.lossy, true);
 assert.ok(pastedTypeScriptResult.stashKey);
 assert.ok(
   pastedTypeScriptResult.text.includes(
-    `// ... 19 lines omitted from file ${JSON.stringify(globalStashFile(pastedTypeScriptResult.stashKey!))}, starting at line 2`,
+    `// ... 14 lines omitted from file ${JSON.stringify(globalStashFile(pastedTypeScriptResult.stashKey!))}, starting at line 7`,
   ),
   `无文件路径的 TypeScript 粘贴内容缺少 stash 分片提示:\n${pastedTypeScriptResult.text}`,
 );
@@ -213,7 +212,7 @@ const omittedStart = Number(fileHint![3]);
 const omittedCount = Number(fileHint![1]);
 assert.strictEqual(
   stashFileContent.split('\n').slice(omittedStart - 1, omittedStart - 1 + omittedCount).join('\n'),
-  pastedTypeScript.split('\n').slice(1, 20).join('\n'),
+  pastedTypeScript.split('\n').slice(6, 20).join('\n'),
 );
 
 // 搜索结果的内联坐标属于 stash 文件，而不是 file:line 中的源文件行号。

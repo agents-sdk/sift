@@ -258,7 +258,7 @@ mod tests {
                     "    value_$i = x + $i",
                     "    return value_0\n",
                 ),
-                ("#", 2, 35),
+                ("#", 7, 31),
             ),
             (
                 "/workspace/src/demo.js",
@@ -267,7 +267,7 @@ mod tests {
                     "  const value_$i = x + $i;",
                     "  return value_0;\n}\n",
                 ),
-                ("//", 2, 36),
+                ("//", 7, 31),
             ),
             (
                 "/workspace/src/demo.ts",
@@ -276,7 +276,7 @@ mod tests {
                     "  const value_$i: number = x + $i;",
                     "  return value_0;\n}\n",
                 ),
-                ("//", 2, 36),
+                ("//", 7, 31),
             ),
             (
                 "/workspace/src/demo.go",
@@ -285,7 +285,7 @@ mod tests {
                     "    value$i := x + $i",
                     "    return value0\n}\n",
                 ),
-                ("//", 4, 36),
+                ("//", 9, 31),
             ),
             (
                 "/workspace/src/demo.rs",
@@ -294,7 +294,7 @@ mod tests {
                     "    let value_$i = x + $i;",
                     "    value_0\n}\n",
                 ),
-                ("//", 2, 36),
+                ("//", 7, 31),
             ),
             (
                 "/workspace/src/Demo.java",
@@ -303,7 +303,7 @@ mod tests {
                     "        int value$i = x + $i;",
                     "        return value0;\n    }\n}\n",
                 ),
-                ("//", 3, 36),
+                ("//", 8, 31),
             ),
             (
                 "/workspace/src/demo.c",
@@ -312,7 +312,7 @@ mod tests {
                     "    int value$i = x + $i;",
                     "    return value0;\n}\n",
                 ),
-                ("//", 2, 36),
+                ("//", 7, 31),
             ),
             (
                 "/workspace/src/demo.cpp",
@@ -321,7 +321,7 @@ mod tests {
                     "    int value$i = x + $i;",
                     "    return value0;\n}\n",
                 ),
-                ("//", 2, 36),
+                ("//", 7, 31),
             ),
         ];
 
@@ -371,16 +371,16 @@ mod tests {
         assert_eq!(result.stash_key.as_deref(), Some(key.as_str()));
         assert!(
             result.text.contains(&format!(
-                "// ... 19 lines omitted from file {stash_path}, starting at line 2"
+                "// ... 14 lines omitted from file {stash_path}, starting at line 7"
             )),
             "{}",
             result.text
         );
         assert!(result.text.ends_with(&format!("<<stash:{key}>>")));
 
-        let slice = store.get_lines(&key, 2, 19).unwrap();
-        assert_eq!(slice.line_count, 19);
-        assert!(slice.text.starts_with("  const candidate_0"));
+        let slice = store.get_lines(&key, 7, 14).unwrap();
+        assert_eq!(slice.line_count, 14);
+        assert!(slice.text.starts_with("  const candidate_5"));
         assert!(slice.text.ends_with("  return candidate_0;\n"));
         std::fs::remove_dir_all(dir).ok();
     }

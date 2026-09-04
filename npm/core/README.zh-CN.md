@@ -6,9 +6,9 @@
 
 [English](README.md) · 简体中文 · [项目主页](../../README.zh-CN.md)
 
-### **9 个内置基准场景整体缩小 73.4%**
+### **9 个内置基准场景整体缩小 73.2%**
 
-**75,546 B → 20,087 B** · **估算节省约 16,637 tokens** · **7/7 个有损基准样例成功恢复**
+**75,546 B → 20,257 B** · **估算节省约 16,586 tokens** · **7/7 个有损基准样例成功恢复**
 
 测试口径与完整结果见 [BENCHMARK.md](../../BENCHMARK.md)。当前状态：**Alpha**，1.0 前 API 细节可能变化。
 
@@ -159,7 +159,8 @@ JSON 结构采样、行内片段和 tag protect 改变映射的情况暂不标�
 并抑制近重复片段。输出只抽取原文片段，不生成摘要；被省略的内容属于有损压缩，完整原文保存在 stash 中。
 默认句子抽取无法可靠映射成原始行范围，因此不伪造行片段提示，只通过末尾 stash 标记恢复。
 可选的 `sourcePath` 仅用于通过扩展名直接选择对应的
-tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java、C、C++；因此
+tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java、C、C++。长函数会先保留
+默认 5 行预算内的完整 AST 语句，再折叠剩余函数体，不会截断循环或多行表达式；因此
 只有一个长函数、特征行占比很低的文件也能稳定进入源码压缩。
 返回 `{ text, changed, lossy, stashKey, tokensSaved }`：有损时 `text` 尾部带
 `<<stash:KEY>>` 标记、`stashKey` 非空，可用 `retrieve(stashKey)` 取回原文；无损压缩

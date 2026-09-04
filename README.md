@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **73.4% less context · ~16,637 tokens saved · 7/7 lossy cases recovered**
+### **73.2% less context · ~16,586 tokens saved · 7/7 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -46,7 +46,7 @@ Nine deterministic [demo inputs](npm/core/demo/cases), measured from the current
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 75,546 B | 20,087 B | 73.4% | 16,637 | 7/7 restored |
+| 75,546 B | 20,257 B | 73.2% | 16,586 | 7/7 restored |
 
 Credential-like values remain visible while unrelated text can still be compressed; every lossy case restores the exact original. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
@@ -146,7 +146,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 | Build and test logs | Commands, errors, stack traces, and summaries |
 | grep / ripgrep results | The most useful matches, grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
-| Source code | Signatures and structure while folding eligible function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
+| Source code | Signatures, structure, and the first five lines of complete AST statements before folding function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
 

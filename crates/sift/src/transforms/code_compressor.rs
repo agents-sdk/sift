@@ -138,7 +138,7 @@ fn lang_config(language: CodeLanguage) -> Option<LangConfig> {
 pub struct CodeCompressorConfig {
     /// 低于此 token 数不压缩（参考 min_tokens_for_compression=100）。
     pub min_tokens_for_compression: usize,
-    /// 函数体超过此行数才折叠（参考 max_body_lines=8 的保守版）。
+    /// 每个函数体最多保留的完整语句行数（参考默认 max_body_lines=5）。
     pub max_body_lines: usize,
     /// 压缩后 token 低于原文的 5% 视为过度压缩，回退。
     pub min_output_ratio: f64,
@@ -148,7 +148,7 @@ impl Default for CodeCompressorConfig {
     fn default() -> Self {
         Self {
             min_tokens_for_compression: 100,
-            max_body_lines: 8,
+            max_body_lines: 5,
             min_output_ratio: 0.05,
         }
     }
@@ -167,6 +167,106 @@ pub struct CodeCompressionResult {
     /// 被折叠的原文连续行范围（1-based）。
     pub omissions: Vec<OmissionRange>,
     pub passthrough: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct FunctionLayout {
+    body_start: usize,
+    body_end: usize,
+    statements: Vec<(usize, usize)>,
+    docstring: Option<(usize, usize)>,
+}
+
+fn function_layout(node: tree_sitter::Node, language: CodeLanguage) -> Option<FunctionLayout> {
+    let body = node.child_by_field_name("body")?;
+    let docstring = if language == CodeLanguage::Python {
+        body.named_children(&mut body.walk())
+            .find(|child| !is_comment_node(child.kind()))
+            .and_then(|child| {
+                let is_string = child.kind() == "string"
+                    || (child.kind() == "expression_statement"
+                        && child
+                            .named_child(0)
+                            .is_some_and(|node| node.kind() == "string"));
+                is_string.then(|| (child.start_position().row, child.end_position().row))
+            })
+    } else {
+        None
+    };
+    let mut statements = Vec::new();
+    for child in body.children(&mut body.walk()) {
+        if !child.is_named() || is_comment_node(child.kind()) {
+            continue;
+        }
+        let range = (child.start_position().row, child.end_position().row);
+        if Some(range) == docstring {
+            continue;
+        }
+        if child.kind() == "statement_list" {
+            for inner in child.children(&mut child.walk()) {
+                if inner.is_named() && !is_comment_node(inner.kind()) {
+                    statements.push((inner.start_position().row, inner.end_position().row));
+                }
+            }
+        } else {
+            statements.push((child.start_position().row, child.end_position().row));
+        }
+    }
+    Some(FunctionLayout {
+        body_start: body.start_position().row,
+        body_end: body.end_position().row,
+        statements,
+        docstring,
+    })
+}
+
+fn is_comment_node(kind: &str) -> bool {
+    matches!(kind, "comment" | "line_comment" | "block_comment")
+}
+
+fn line_indent(line: &str) -> &str {
+    &line[..line.len() - line.trim_start().len()]
+}
+
+fn first_line_docstring(lines: &[&str], start: usize, end: usize) -> String {
+    let first = lines[start];
+    if start == end {
+        return first.to_string();
+    }
+    let indent = line_indent(first);
+    let stripped = first.trim();
+    let opener = ["r\"\"\"", "r'''", "\"\"\"", "'''"]
+        .into_iter()
+        .find(|candidate| stripped.starts_with(candidate));
+    let Some(opener) = opener else {
+        return first.to_string();
+    };
+    let quote = &opener[opener.len() - 3..];
+    let first_content = stripped[opener.len()..]
+        .trim()
+        .strip_suffix(quote)
+        .unwrap_or(stripped[opener.len()..].trim())
+        .trim();
+    if !first_content.is_empty() {
+        return format!("{indent}{opener}{first_content}{quote}");
+    }
+    let second_content = lines
+        .get(start + 1)
+        .map(|line| line.trim())
+        .unwrap_or_default()
+        .strip_suffix(quote)
+        .unwrap_or_else(|| {
+            lines
+                .get(start + 1)
+                .map(|line| line.trim())
+                .unwrap_or_default()
+        })
+        .trim();
+    if second_content.is_empty() {
+        first.to_string()
+    } else {
+        format!("{indent}{opener}{second_content}{quote}")
+    }
 }
 
 // ─── 语言检测 ─────────────────────────────────────────────────────────────
@@ -335,7 +435,7 @@ impl CodeAwareCompressor {
         // 收集结构骨架：imports / package / 类型整段保留；类只保留头
         //（到 `{` 行），成员再深入——方法签名保留、长体折叠，字段等
         // 短成员整段保留；顶层函数签名保留、长体折叠。
-        let mut pieces: Vec<(usize, usize, bool /* is_function */)> = Vec::new();
+        let mut pieces: Vec<(usize, usize, Option<FunctionLayout>)> = Vec::new();
         let mut stack = vec![(root, false)];
         while let Some((node, in_class)) = stack.pop() {
             let kind = node.kind();
@@ -343,7 +443,7 @@ impl CodeAwareCompressor {
             let end = node.end_position().row;
 
             if cfg.package_node == Some(kind) || cfg.import_nodes.contains(&kind) {
-                pieces.push((start, end, false));
+                pieces.push((start, end, None));
                 continue; // 不深入
             }
             if cfg.class_nodes.contains(&kind) {
@@ -353,10 +453,10 @@ impl CodeAwareCompressor {
                     .map(|body| body.start_position().row.saturating_sub(1))
                     .unwrap_or(end)
                     .max(start);
-                pieces.push((start, header_end, false));
+                pieces.push((start, header_end, None));
                 // 类的收尾 `}` 行单独保留，维持语法合法
                 if end > header_end {
-                    pieces.push((end, end, false));
+                    pieces.push((end, end, None));
                 }
                 // 深入类体成员（方法可折叠，字段等保留）；
                 // 跳过 class_body 容器本身，只推其子节点
@@ -371,16 +471,16 @@ impl CodeAwareCompressor {
                 continue;
             }
             if cfg.type_nodes.contains(&kind) {
-                pieces.push((start, end, false));
+                pieces.push((start, end, None));
                 continue;
             }
             if cfg.function_nodes.contains(&kind) {
-                pieces.push((start, end, true));
+                pieces.push((start, end, function_layout(node, lang)));
                 continue;
             }
             if in_class {
                 // 类内非函数成员（字段 / 构造代码块等）：整段保留
-                pieces.push((start, end, false));
+                pieces.push((start, end, None));
                 continue;
             }
             // 深入子节点（逆序 push 保持顺序）
@@ -398,7 +498,7 @@ impl CodeAwareCompressor {
         let mut bodies_folded = 0usize;
         let mut omissions = Vec::new();
         let mut cursor = 0usize;
-        for (start, end, is_fn) in &pieces {
+        for (start, end, function) in &pieces {
             let end = (*end).min(lines.len() - 1);
             if *start > cursor {
                 for line in &lines[cursor..*start] {
@@ -410,7 +510,7 @@ impl CodeAwareCompressor {
                 continue;
             }
             let seg_lines = &lines[*start..=end];
-            if !is_fn {
+            let Some(function) = function else {
                 // 整段保留
                 for l in seg_lines {
                     out.push_str(l);
@@ -418,9 +518,9 @@ impl CodeAwareCompressor {
                 }
                 cursor = end + 1;
                 continue;
-            }
-            // 函数：找 body 起始行（签名 = body 前的行）
-            if seg_lines.len() <= self.config.max_body_lines {
+            };
+            // 与 Headroom 一致：函数总行数不超过 body_limit + 签名/闭合两行时原样保留。
+            if seg_lines.len() <= self.config.max_body_lines + 2 {
                 for l in seg_lines {
                     out.push_str(l);
                     out.push('\n');
@@ -428,43 +528,108 @@ impl CodeAwareCompressor {
                 cursor = end + 1;
                 continue;
             }
-            // 折叠：保留签名（到 body 起始行——`{` 或 Python `:` 结尾）+ 折叠注释 + 尾行
-            let body_first = seg_lines
-                .iter()
-                .position(|l| {
-                    let t = l.trim_end();
-                    t.ends_with('{') || t.ends_with(':') || l.trim_start().starts_with('{')
-                })
-                .unwrap_or(0);
-            let keep_sig = body_first + 1; // 含 '{' 或 ':' 那行
-            for l in &seg_lines[..keep_sig.min(seg_lines.len())] {
-                out.push_str(l);
-                out.push('\n');
+            // 只保留完整 AST 语句。即使首条语句超过预算也完整保留，绝不截断循环、
+            // match 或多行表达式；后续语句超过剩余预算时停止。
+            let mut kept_end = function.body_start.saturating_sub(1);
+            let mut kept_lines = 0usize;
+            for &(stmt_start, stmt_end) in &function.statements {
+                let statement_lines = stmt_end.saturating_sub(stmt_start) + 1;
+                if kept_lines > 0 && kept_lines + statement_lines > self.config.max_body_lines {
+                    break;
+                }
+                kept_end = kept_end.max(stmt_end);
+                kept_lines += statement_lines;
             }
-            let omitted = seg_lines.len().saturating_sub(keep_sig + 1);
+            let brace_language = lang != CodeLanguage::Python;
+            let closing_start = if brace_language {
+                function.body_end
+            } else {
+                end + 1
+            };
+            let content_end = function
+                .docstring
+                .map_or(kept_end, |(_, doc_end)| kept_end.max(doc_end));
+            let omission_start = content_end.saturating_add(1);
+            let omission_end = closing_start.saturating_sub(1).min(end);
+            let mut folded = false;
+            if let Some((doc_start, doc_end)) = function.docstring {
+                for l in &lines[*start..doc_start] {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+                out.push_str(&first_line_docstring(&lines, doc_start, doc_end));
+                out.push('\n');
+                if doc_end > doc_start {
+                    let range = OmissionRange {
+                        start_line: doc_start + 1,
+                        line_count: doc_end - doc_start + 1,
+                    };
+                    let indent = line_indent(lines[doc_start]);
+                    if let Some(path) = super::line_omissions::actionable_file_path(stash_file_path)
+                    {
+                        let hint = super::line_omissions::hint(path, &range, stash_line_offset);
+                        out.push_str(&format!("{indent}{} ... {hint}\n", cfg.comment_prefix));
+                    } else {
+                        out.push_str(&format!(
+                            "{indent}{} ... {} lines omitted\n",
+                            cfg.comment_prefix, range.line_count
+                        ));
+                    }
+                    omissions.push(range);
+                    folded = true;
+                }
+                if doc_end < kept_end.min(end) {
+                    for l in &lines[doc_end + 1..=kept_end.min(end)] {
+                        out.push_str(l);
+                        out.push('\n');
+                    }
+                }
+            } else {
+                for l in &lines[*start..=kept_end.min(end)] {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+            }
+            let omitted = omission_end
+                .checked_sub(omission_start)
+                .map_or(0, |span| span + 1);
             if omitted > 0 {
+                let indent = lines
+                    .get(omission_start)
+                    .or_else(|| lines.get(function.body_start))
+                    .map_or("    ", |line| line_indent(line));
                 if let Some(path) = super::line_omissions::actionable_file_path(stash_file_path) {
                     let range = OmissionRange {
-                        start_line: start + keep_sig + 1,
+                        start_line: omission_start + 1,
                         line_count: omitted,
                     };
                     let hint = super::line_omissions::hint(path, &range, stash_line_offset);
-                    out.push_str(&format!("    {} ... {hint}\n", cfg.comment_prefix));
+                    out.push_str(&format!("{indent}{} ... {hint}\n", cfg.comment_prefix));
                 } else {
                     out.push_str(&format!(
-                        "    {} ... {} lines omitted\n",
+                        "{indent}{} ... {} lines omitted\n",
                         cfg.comment_prefix, omitted
                     ));
                 }
-                // 保留尾行（闭括号），维持语法合法
-                if let Some(last) = seg_lines.last() {
-                    out.push_str(last);
-                    out.push('\n');
+                // brace 语言保留闭合结构；Python 已保留至少一条完整语句。
+                if brace_language {
+                    for line in &lines[closing_start..=end] {
+                        out.push_str(line);
+                        out.push('\n');
+                    }
                 }
                 omissions.push(OmissionRange {
-                    start_line: start + keep_sig + 1,
+                    start_line: omission_start + 1,
                     line_count: omitted,
                 });
+                folded = true;
+            } else if brace_language {
+                for line in &lines[closing_start..=end] {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+            if folded {
                 bodies_folded += 1;
             }
             cursor = end + 1;
@@ -579,12 +744,58 @@ mod tests {
         assert_eq!(
             r.omissions,
             vec![OmissionRange {
-                start_line: 6,
-                line_count: 30,
+                start_line: 11,
+                line_count: 26,
             }]
         );
+        for i in 0..5 {
+            assert!(r.compressed.contains(&format!("value_{i} =")));
+        }
+        assert!(!r.compressed.contains("value_5 ="));
         assert!(r.compressed.contains("def helper"));
         assert!(r.compressed.contains("import os"));
+    }
+
+    #[test]
+    fn nested_python_omission_uses_original_body_indent() {
+        let mut code = String::from("class Service:\n    def calculate(self, x):\n");
+        for i in 0..20 {
+            code.push_str(&format!("        value_{i} = x + {i}\n"));
+        }
+        code.push_str("        return value_0\n");
+
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let result = c.compress(&code);
+
+        assert!(!result.passthrough);
+        assert!(result.compressed.contains("\n        # ... "));
+    }
+
+    #[test]
+    fn python_docstring_keeps_first_line_without_spending_body_budget() {
+        let mut code = String::from(
+            "def calculate(x):\n    \"\"\"Explain the calculation.\n\n    This detail is intentionally long.\n    It should be recoverable from stash.\n    \"\"\"\n",
+        );
+        for i in 0..20 {
+            code.push_str(&format!("    value_{i} = x + {i}\n"));
+        }
+        code.push_str("    return value_0\n");
+
+        let c = CodeAwareCompressor::new(CodeCompressorConfig::default());
+        let result = c.compress(&code);
+
+        assert!(!result.passthrough);
+        assert!(result
+            .compressed
+            .contains("    \"\"\"Explain the calculation.\"\"\""));
+        assert!(!result
+            .compressed
+            .contains("This detail is intentionally long"));
+        for i in 0..5 {
+            assert!(result.compressed.contains(&format!("value_{i} =")));
+        }
+        assert!(!result.compressed.contains("value_5 ="));
+        assert_eq!(result.omissions.len(), 2);
     }
 
     #[test]
@@ -637,7 +848,7 @@ mod tests {
         let result = c.apply(&long_python(), &ctx).unwrap();
         assert!(result
             .compressed
-            .contains(r#"# ... 30 lines omitted from file "/tmp/sift-stash/0123456789abcdef01234567", starting at line 6"#));
+            .contains(r#"# ... 26 lines omitted from file "/tmp/sift-stash/0123456789abcdef01234567", starting at line 11"#));
         assert_eq!(result.original, long_python());
         assert_eq!(result.omissions.len(), 1);
     }
