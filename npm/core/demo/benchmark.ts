@@ -15,6 +15,7 @@ import { gitDiffCase } from './cases/05-git-diff';
 import { mixedOutputCase } from './cases/06-mixed-output';
 import { sourceCodeCase } from './cases/07-source-code';
 import { plainTextCase } from './cases/08-plain-text';
+import { uniquePlainTextCase } from './cases/09-unique-plain-text';
 import type { DemoCase } from './types';
 import type * as SiftApi from '../src/index';
 
@@ -36,6 +37,7 @@ const cases: DemoCase[] = [
   mixedOutputCase,
   sourceCodeCase,
   plainTextCase,
+  uniquePlainTextCase,
 ];
 
 const STASH_RE = /<<stash:([0-9a-f]{24})>>/g;
@@ -90,6 +92,7 @@ const rows: Row[] = cases.map((demo) => {
   for (const expected of demo.mustContain ?? []) {
     assert.ok(output.includes(expected), `${demo.id}: 压缩结果缺少关键文本 ${expected}`);
   }
+  demo.verify?.(output);
   if (demo.expectedPath === 'lossy-stash') {
     assert.ok(result.changed, `${demo.id}: 预期有损压缩，实际原样返回`);
     assert.ok(keys.length > 0, `${demo.id}: 预期生成 stash 标记`);

@@ -16,6 +16,7 @@ import { gitDiffCase } from './cases/05-git-diff';
 import { mixedOutputCase } from './cases/06-mixed-output';
 import { sourceCodeCase } from './cases/07-source-code';
 import { plainTextCase } from './cases/08-plain-text';
+import { uniquePlainTextCase } from './cases/09-unique-plain-text';
 import { renderResultMarkdown, runCase } from './runner';
 import type { DemoResult } from './runner';
 import type { DemoCase } from './types';
@@ -29,6 +30,7 @@ const cases: DemoCase[] = [
   mixedOutputCase,
   sourceCodeCase,
   plainTextCase,
+  uniquePlainTextCase,
 ];
 
 const args = process.argv.slice(2);

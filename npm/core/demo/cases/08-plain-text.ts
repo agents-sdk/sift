@@ -1,28 +1,28 @@
 import type { DemoCase } from '../types';
 
-const paragraphs: string[] = [
-  'The service exposes a REST API for managing user accounts and preferences. ' +
-    'Requests are authenticated via bearer tokens issued by the identity provider. ' +
-    'Rate limits apply per tenant and per API key, with separate quotas for read ' +
-    'and write operations. Clients should implement exponential backoff on 429.',
-  'Deployment credentials: api_key=sk-demo-Xk9mQ2vLpZ7wRtY4uHj6nB8cE5fG3aD1sWq2eRt. ' +
-    'Do not commit this value to version control or share it in chat channels.',
+const repeatedStatus =
+  'Routine status: the compatibility test matrix completed successfully on all supported ' +
+  'platforms. No new failures, decisions, or follow-up actions were reported in this update.';
+
+const paragraphs = [
+  'Weekly engineering status report. Exact duplicate updates should be collapsed while ' +
+    'the first occurrence and all unique conclusions remain visible.',
+  ...Array.from({ length: 14 }, () => repeatedStatus),
+  'Conclusion: continue monitoring the release candidate and escalate only newly observed failures.',
 ];
-for (let i = 0; i < 12; i++) {
-  paragraphs.push(
-    `Historical note ${i}: the legacy stack ran on bare metal with manual deploys. ` +
-    'Each release required SSH access and a checklist printed on paper. The team ' +
-    'celebrated every Friday deployment that did not page anyone at night.',
-  );
-}
 
 export const plainTextCase: DemoCase = {
   id: 'plain-text',
-  title: '长纯文本 + 高熵敏感值',
-  description: '验证保守策略原样保留独有段落和疑似凭据等高熵文本。',
+  title: '重复纯文本',
+  description: '折叠同一章节内逐字相同的完整段落，保留首份与独有结论。',
   input: paragraphs.join('\n\n'),
-  query: 'rate limits',
+  query: 'compatibility failures',
   expectedType: 'plain_text',
-  expectedPath: 'unchanged',
-  mustContain: ['Rate limits apply', 'api_key=sk-demo-'],
+  expectedPath: 'lossy-stash',
+  mustContain: ['Weekly engineering status report', repeatedStatus, 'Conclusion:'],
+  verify: (output) => {
+    if (output.split(repeatedStatus).length - 1 !== 1) {
+      throw new Error('重复状态段落应只保留首份');
+    }
+  },
 };

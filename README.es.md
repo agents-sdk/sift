@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 61.8% menos de contexto. 13,497 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 62.3% menos de contexto. 14,129 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los ocho escenarios incluidos pasan de **72,823 B a 27,833 B**, con recuperación correcta del original en **5/5 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los nueve escenarios incluidos pasan de **75,546 B a 28,447 B**, con recuperación correcta del original en **6/6 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 61.8% más pequeño**, pasando de 72,823 a 27,833 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 62.3% más pequeño**, pasando de 75,546 a 28,447 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -48,7 +48,7 @@ sift ofrece:
 
 ## ¿Cuánto puede ahorrar?
 
-Resultados medidos con las ocho [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el paquete publicado `0.0.1-alpha.7`. Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
+Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el paquete publicado `0.0.1-alpha.7`. Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
 
 | Escenario | Entrada | Salida | Reducción | Tokens ahorrados estimados | Recuperación |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -59,8 +59,9 @@ Resultados medidos con las ocho [entradas de demo](npm/core/demo/cases) determin
 | Git diff | 23,007 B | 12,759 B | 44.5% | 3,075 | PASS |
 | Salida de comandos mixta | 9,240 B | 1,601 B | 82.7% | 2,291 | PASS |
 | Código fuente Rust | 2,282 B | 402 B | 82.4% | 564 | PASS |
-| Texto plano con datos únicos | 3,125 B | 3,125 B | 0% | 0 | Sin cambios |
-| **Total** | **72,823 B** | **27,833 B** | **61.8%** | **13,497** | **5/5 casos con pérdida recuperados** |
+| Texto plano repetido | 2,723 B | 614 B | 77.5% | 632 | PASS |
+| Protección de datos únicos y valores sensibles | 3,125 B | 3,125 B | 0% | 0 | Sin cambios |
+| **Total** | **75,546 B** | **28,447 B** | **62.3%** | **14,129** | **6/6 casos con pérdida recuperados** |
 
 Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. El único caso sin cambios se incluye deliberadamente: la compresión conservadora de texto plano conserva los datos únicos. `tokensSaved` usa el estimador integrado de sift; el recuento real y el ahorro dependen del tokenizer del modelo y de tus datos.
 
