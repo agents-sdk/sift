@@ -164,7 +164,7 @@ if (result.stashKey) {
 
 | 输入 | sift 保留或简化的内容 |
 | --- | --- |
-| JSON 数组 | 规则对象数组优先转为无损 CSV-schema 并保留全部记录；其他结构递归采样，优先保留重要、异常和错误记录 |
+| JSON 数组 | 同构记录优先转为无损 CSV-schema；存在清晰分类字段的异构记录按类别输出可恢复 schema buckets，两者都保留全部记录；其余结构再递归采样 |
 | 构建与测试日志 | 命令、错误、堆栈和摘要 |
 | grep / ripgrep 结果 | 按源码上下文组织的高价值匹配 |
 | Unified diff | 代表性 hunk 与改动结构 |
@@ -174,7 +174,7 @@ if (result.stashKey) {
 | CSV、TSV、Markdown 表格 | 严格解析列结构后桥接 CSV-schema；采用压缩结果时保留全部记录，已足够紧凑的输入可原样透传 |
 | Pretty JSON 与重复日志 | 优先尝试无损 minify 或模板化 |
 
-CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行；这样可以去掉每条 JSON 记录里重复的字段名，同时不丢记录。
+CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行。异构数组可用 `__buckets:type` 按类别分别声明 schema，避免联合表中大量空列，同时不丢记录。
 
 HTML 会提取文章正文并转换为可读 Markdown，移除脚本、样式、导航、侧栏、广告和页脚；完整原文仍可从 stash 恢复。
 

@@ -153,6 +153,42 @@ mod tests {
     }
 
     #[test]
+    fn heterogeneous_json_array_uses_buckets_and_stashes_exact_original() {
+        let rows = (0..80)
+            .map(|index| {
+                if index % 2 == 0 {
+                    json!({
+                        "type": "user",
+                        "id": index,
+                        "display_name": format!("user-{index}"),
+                        "email_address": format!("user-{index}@example.com")
+                    })
+                } else {
+                    json!({
+                        "type": "order",
+                        "id": index,
+                        "currency_code": "USD",
+                        "total_amount_cents": index * 100
+                    })
+                }
+            })
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(&raw, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(result.lossy);
+        assert!(result.text.starts_with("__buckets:type\n"));
+        assert!(result.text.contains("__key:order\n[40]{"));
+        assert!(result.text.contains("__key:user\n[40]{"));
+        assert_eq!(result.text.matches("<<stash:").count(), 1);
+        let key = result.stash_key.as_deref().unwrap();
+        assert_eq!(store.get(key).as_deref(), Some(raw.as_str()));
+    }
+
+    #[test]
     fn search_results_lossy_has_single_marker() {
         // 回归：search_compressor 的折叠标记曾内嵌 `<<stash:KEY>>`，框架又在末尾
         // 追加一次，导致输出出现两个标记。这里断言有损输出只有一个取回标记。

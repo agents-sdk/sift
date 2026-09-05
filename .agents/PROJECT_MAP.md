@@ -30,7 +30,7 @@ crates/
         line_omissions.rs # 按原始行坐标渲染共享内联提示，短空隙保留，分段行偏移换算
         log_context.rs    # 日志首行/命令回显/显式续行保护，模板化与有损选择共用
         smart_crusher.rs  # JSON 对象/数组递归压缩（无损 schema 优先，其他结构采样/prose 字段）
-        json_compactor.rs # 规则/稀疏对象数组 CSV-schema 紧凑化（统一嵌套字段扁平化）
+        json_compactor.rs # 规则/稀疏对象数组 CSV-schema 紧凑化（异构分桶、统一嵌套字段扁平化）
         log_compressor.rs # 构建/测试日志压缩（错误/堆栈/摘要保留）
         search_compressor.rs # grep/ripgrep 搜索结果抽稀
         diff_compressor.rs   # unified diff hunk 采样
@@ -126,7 +126,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
     Responses function_call_output；system/user/assistant prompt 默认保护），每候选：
       0. tag_protector::protect             （自定义 XML 标签 → 占位符）
       1. 无损 reformat（reformat_for：JsonReformatter / LogTemplate）
-         ├ JSON 规则对象数组：CSV-schema，达到 ≥15% 收益即短路并保留全部行
+         ├ JSON 规则对象数组：CSV-schema，异构记录按分类字段分桶；达到 ≥15% 收益即保留全部行
          └ 其他 JSON minify / 日志模板缩到 ≤80% 即短路——不写 stash、无标记
       2. 整块检测 → compressor_for
           JsonArray     → 规则对象数组已由无损 CSV-schema 优先处理；其余进入 smart_crusher

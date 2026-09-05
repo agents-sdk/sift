@@ -89,7 +89,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 | Input | What remains visible |
 | --- | --- |
-| JSON objects and arrays | Uniform record arrays first become a lossless CSV-schema with every row retained; other shapes use recursive sampling with critical and anomalous records prioritized |
+| JSON objects and arrays | Uniform records first become a lossless CSV-schema; heterogeneous records with a clean categorical field are split into recoverable schema buckets. Both retain every row; remaining shapes use recursive sampling |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -101,7 +101,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
 
-CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows, removing repeated JSON keys without dropping records.
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category, avoiding mostly-empty union columns without dropping records.
 
 ## Recovery
 

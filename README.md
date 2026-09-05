@@ -142,7 +142,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 
 | Input | What sift keeps or simplifies |
 | --- | --- |
-| JSON objects and arrays | Uniform record arrays first become a lossless CSV-schema with every row retained; other shapes use recursive sampling with critical and anomalous records prioritized |
+| JSON objects and arrays | Uniform records first become a lossless CSV-schema; heterogeneous records with a clean categorical field are split into recoverable schema buckets. Both retain every row; remaining shapes use recursive sampling |
 | Build and test logs | Commands, errors, stack traces, and summaries |
 | grep / ripgrep results | The most useful matches, grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -153,7 +153,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 | CSV, TSV, and Markdown tables | Strict column parsing bridged to CSV-schema; adopted output retains every record, while already-compact input may pass through unchanged |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
 
-CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. This removes repeated JSON keys without dropping records.
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category, avoiding mostly-empty union columns without dropping records.
 
 ## Designed for safe adoption
 

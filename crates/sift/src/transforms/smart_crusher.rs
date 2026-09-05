@@ -6,7 +6,8 @@
 //! stash store、TOIN/feedback/telemetry 等子系统）。本实现不做 parity，只做
 //! **算法行为等价**：同样的输入得到信息等价的压缩输出——
 //!
-//! - 规则对象数组先尝试 CSV-schema 紧凑化，达到 15% 收益时保留全部行；
+//! - 规则对象数组先尝试 CSV-schema 紧凑化，异构记录可按分类字段分桶；达到
+//!   15% 收益时保留全部行；
 //! - 错误行（error/failed/fatal/... 关键字）永不丢弃；
 //! - 罕见 status 值（Pareto 80% 主流值之外的取值）保留；
 //! - 结构异类（出现在 <20% 行中的字段）保留；
@@ -15,7 +16,7 @@
 //! - 被丢弃的行在输出尾部的 `_crushed` 哨兵对象中标注（计数 + 采样）。
 //!
 //! 相对参考实现的简化：
-//! - CSV-schema 已覆盖规则/稀疏对象数组与统一嵌套字段，但尚无异构 buckets、
+//! - CSV-schema 已覆盖规则/稀疏对象数组、异构 buckets 与统一嵌套字段，但尚无
 //!   opaque cell 独立卸载、observer / constraint trait 对象；
 //! - 自适应 K 用简单的 `clamp(n/4, 3, max_items)` 代替 Kneedle 算法；
 //! - 内容哈希用 blake3（允许依赖）代替 md5；

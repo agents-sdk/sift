@@ -59,6 +59,28 @@ assert.ok(compressedContent.includes('199,'), '最后一行必须保留');
 assert.ok(!compressedContent.includes('<<stash:'), '无损 schema 不应含 stash 标记');
 assert.strictEqual(retrieve('../outside-stash'), null, '非法 stash key 必须被拒绝');
 
+// 字段集合分离的异构数组按分类字段分桶；全部记录可见，原始 JSON 可取回。
+const heterogeneousRows = Array.from({ length: 80 }, (_, i) => i % 2 === 0 ? ({
+  type: 'user',
+  id: i,
+  display_name: `user-${i}`,
+  email_address: `user-${i}@example.com`,
+}) : ({
+  type: 'order',
+  id: i,
+  currency_code: 'USD',
+  total_amount_cents: i * 100,
+}));
+const heterogeneousJson = JSON.stringify(heterogeneousRows);
+const bucketResult = siftText(heterogeneousJson);
+assert.strictEqual(bucketResult.changed, true);
+assert.strictEqual(bucketResult.lossy, true);
+assert.ok(bucketResult.text.startsWith('__buckets:type\n'));
+assert.ok(bucketResult.text.includes('__key:order\n[40]{'));
+assert.ok(bucketResult.text.includes('__key:user\n[40]{'));
+assert.ok(bucketResult.stashKey);
+assert.strictEqual(retrieve(bucketResult.stashKey!), heterogeneousJson);
+
 // 长纪要按相关性抽取；有损结果必须能从 stash 逐字恢复。
 const oldMeeting = fs.readFileSync(
   path.resolve(__dirname, '../../../crates/sift/tests/fixtures/plain_text_meeting.txt'),

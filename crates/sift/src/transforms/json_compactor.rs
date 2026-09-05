@@ -7,6 +7,11 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+const CORE_FIELD_FRACTION: f64 = 0.8;
+const HETEROGENEOUS_CORE_RATIO: f64 = 0.6;
+const MIN_BUCKETS: usize = 2;
+const MAX_BUCKETS: usize = 8;
+
 #[derive(Debug, Clone)]
 struct Column {
     name: String,
@@ -28,7 +33,22 @@ pub(super) fn try_compact_csv_schema(
     if require_lossless_shape && !has_lossless_shape(items) {
         return None;
     }
-    let columns = build_columns(items, !require_lossless_shape);
+
+    let output = if require_lossless_shape {
+        render_table(items, false)?
+    } else if let Some(bucketed) = render_buckets(items) {
+        bucketed
+    } else {
+        render_table(items, true)?
+    };
+
+    let compact_json = serde_json::to_string(items).ok()?;
+    let savings_ratio = 1.0 - output.len() as f64 / compact_json.len().max(1) as f64;
+    (savings_ratio >= min_savings_ratio).then_some(output)
+}
+
+fn render_table(items: &[Value], flatten_nested: bool) -> Option<String> {
+    let columns = build_columns(items, flatten_nested);
     if columns.is_empty() {
         return None;
     }
@@ -71,9 +91,97 @@ pub(super) fn try_compact_csv_schema(
         output.push('\n');
     }
 
-    let compact_json = serde_json::to_string(items).ok()?;
-    let savings_ratio = 1.0 - output.len() as f64 / compact_json.len().max(1) as f64;
-    (savings_ratio >= min_savings_ratio).then_some(output)
+    Some(output)
+}
+
+fn render_buckets(items: &[Value]) -> Option<String> {
+    let frequencies = key_frequencies(items);
+    let core_threshold = (items.len() as f64 * CORE_FIELD_FRACTION).ceil() as usize;
+    let core_count = frequencies
+        .values()
+        .filter(|frequency| **frequency >= core_threshold)
+        .count();
+    let core_ratio = if frequencies.is_empty() {
+        1.0
+    } else {
+        core_count as f64 / frequencies.len() as f64
+    };
+    if core_ratio >= HETEROGENEOUS_CORE_RATIO {
+        return None;
+    }
+
+    let discriminator = detect_discriminator(items, &frequencies)?;
+    let mut groups = BTreeMap::<String, Vec<Value>>::new();
+    for item in items {
+        let key = item.as_object()?.get(&discriminator)?.as_str()?.to_string();
+        groups.entry(key).or_default().push(item.clone());
+    }
+
+    let mut output = format!("__buckets:{discriminator}\n");
+    for (key, group) in groups {
+        output.push_str("__key:");
+        output.push_str(&csv_quote_if_needed(&key));
+        output.push('\n');
+        if group.len() < 2 {
+            output.push_str(&render_raw_value_table(&group)?);
+        } else {
+            output.push_str(&render_table(&group, true)?);
+        }
+    }
+    Some(output)
+}
+
+fn render_raw_value_table(items: &[Value]) -> Option<String> {
+    let mut output = format!("[{}]{{value:json}}\n", items.len());
+    for item in items {
+        output.push_str(&csv_quote(&serde_json::to_string(item).ok()?));
+        output.push('\n');
+    }
+    Some(output)
+}
+
+fn key_frequencies(items: &[Value]) -> BTreeMap<String, usize> {
+    let mut frequencies = BTreeMap::new();
+    for object in items.iter().filter_map(Value::as_object) {
+        for key in object.keys() {
+            *frequencies.entry(key.clone()).or_default() += 1;
+        }
+    }
+    frequencies
+}
+
+fn detect_discriminator(items: &[Value], frequencies: &BTreeMap<String, usize>) -> Option<String> {
+    let total = items.len();
+    let mut best = None::<(String, usize)>;
+
+    for (key, frequency) in frequencies {
+        if *frequency != total {
+            continue;
+        }
+        let Some(values) = items
+            .iter()
+            .map(|item| item.as_object()?.get(key)?.as_str())
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let distinct = values
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if !(MIN_BUCKETS..=MAX_BUCKETS).contains(&distinct) || distinct as f64 / total as f64 > 0.7
+        {
+            continue;
+        }
+        if match &best {
+            None => true,
+            Some((_, previous)) => distinct > *previous,
+        } {
+            best = Some((key.clone(), distinct));
+        }
+    }
+
+    best.map(|(key, _)| key)
 }
 
 fn has_lossless_shape(items: &[Value]) -> bool {
@@ -110,12 +218,7 @@ fn has_lossless_shape(items: &[Value]) -> bool {
 }
 
 fn build_columns(items: &[Value], flatten_nested: bool) -> Vec<Column> {
-    let mut frequencies = BTreeMap::<String, usize>::new();
-    for object in items.iter().filter_map(Value::as_object) {
-        for key in object.keys() {
-            *frequencies.entry(key.clone()).or_default() += 1;
-        }
-    }
+    let frequencies = key_frequencies(items);
     let mut keys = frequencies.keys().cloned().collect::<Vec<_>>();
     keys.sort_by(|left, right| {
         frequencies[right]
@@ -251,5 +354,92 @@ mod tests {
             .collect::<Vec<_>>();
         let output = try_compact_csv_schema(&items, 5, 0.15, false).unwrap();
         assert!(output.starts_with("[20]{id:int,meta.region:string,meta.tier:string}\n"));
+    }
+
+    #[test]
+    fn buckets_heterogeneous_rows_by_string_discriminator() {
+        let items = (0..40)
+            .map(|index| {
+                if index % 2 == 0 {
+                    json!({
+                        "type": "user",
+                        "id": index,
+                        "display_name": format!("user-{index}"),
+                        "email_address": format!("user-{index}@example.com")
+                    })
+                } else {
+                    json!({
+                        "type": "order",
+                        "id": index,
+                        "currency_code": "USD",
+                        "total_amount_cents": index * 100
+                    })
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let output = try_compact_csv_schema(&items, 5, 0.15, false).unwrap();
+
+        assert!(output.starts_with("__buckets:type\n"), "got: {output}");
+        assert!(output.contains("__key:order\n[20]{"));
+        assert!(output.contains("__key:user\n[20]{"));
+        assert!(output.contains("USD,39,3900,order"));
+        assert!(output.contains("user-38,user-38@example.com,38,user"));
+    }
+
+    #[test]
+    fn bucket_discriminator_prefers_more_categories_and_rejects_ids() {
+        let items = (0..40)
+            .map(|index| {
+                let mut item = serde_json::Map::new();
+                item.insert("record_id".into(), json!(format!("record-{index}")));
+                item.insert("kind".into(), json!(if index % 2 == 0 { "a" } else { "b" }));
+                item.insert("phase".into(), json!(format!("phase-{}", index % 4)));
+                item.insert(format!("field_{}", index % 4), json!(index));
+                Value::Object(item)
+            })
+            .collect::<Vec<_>>();
+
+        let output = try_compact_csv_schema(&items, 5, 0.0, false).unwrap();
+
+        assert!(output.starts_with("__buckets:phase\n"), "got: {output}");
+        assert!(!output.starts_with("__buckets:record_id\n"));
+    }
+
+    #[test]
+    fn homogeneous_rows_are_not_bucketed_by_categorical_field() {
+        let items = (0..40)
+            .map(|index| {
+                json!({
+                    "id": index,
+                    "type": if index % 2 == 0 { "user" } else { "order" },
+                    "status": "ready"
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let output = try_compact_csv_schema(&items, 5, 0.0, false).unwrap();
+
+        assert!(output.starts_with("[40]{id:int,status:string,type:string}\n"));
+    }
+
+    #[test]
+    fn singleton_bucket_falls_back_to_raw_json_value_table() {
+        let items = vec![
+            json!({"type": "bulk", "id": 1, "alpha": "a"}),
+            json!({"type": "bulk", "id": 2, "bravo": "b"}),
+            json!({"type": "bulk", "id": 3, "charlie": "c"}),
+            json!({"type": "bulk", "id": 4, "delta": "d"}),
+            json!({"type": "single", "id": 5, "exception_detail": "only once"}),
+        ];
+
+        let output = render_buckets(&items).unwrap();
+
+        assert!(output.contains("__key:single\n[1]{value:json}\n"));
+        assert!(
+            output
+                .contains(r#""{""type"":""single"",""id"":5,""exception_detail"":""only once""}""#),
+            "got: {output}"
+        );
     }
 }
