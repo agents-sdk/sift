@@ -14,10 +14,10 @@ const input = [
 export const mixedOutputCase: DemoCase = {
   id: 'mixed-output',
   title: '命令回显 + JSON + 尾注混合输出',
-  description: '分段识别嵌入的大 JSON，同时保留 JSON 外部的命令文本。',
+  description: '识别轻量 wrapper 中的大 JSON，以 CSV-schema 保留全部行和外部命令文本。',
   input,
   query: 'find unhealthy pods',
   expectedType: 'json_array',
-  expectedPath: 'lossy-stash',
+  expectedPath: 'changed',
   mustContain: ['$ kubectl get pods -o json', 'TOTAL: 200 pods listed', 'CrashLoopBackOff'],
 };

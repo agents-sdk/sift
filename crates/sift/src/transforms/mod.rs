@@ -6,6 +6,7 @@ pub mod config_compressor;
 pub mod diff_compressor;
 mod diff_noise;
 pub mod html_extractor;
+mod json_compactor;
 mod line_omissions;
 pub mod log_compressor;
 mod log_context;
@@ -75,6 +76,10 @@ impl OffloadOutput {
 pub trait ReformatTransform: Send + Sync {
     fn name(&self) -> &'static str;
     fn applies_to(&self) -> ContentType;
+    /// 无损结果可直接短路的最大输出/输入比例。
+    fn max_output_ratio(&self) -> f64 {
+        0.8
+    }
     fn apply(&self, input: &str, ctx: &CompressionContext) -> Result<String, TransformError>;
 }
 
@@ -144,7 +149,7 @@ pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransf
 /// 无损重排先于有损压缩执行：剥离空白/挖模板，不丢信息、无需 stash。
 pub fn reformat_for(content_type: ContentType) -> Option<Box<dyn ReformatTransform>> {
     match content_type {
-        ContentType::JsonArray => Some(Box::new(reformats::JsonMinifier)),
+        ContentType::JsonArray => Some(Box::new(reformats::JsonReformatter::default())),
         ContentType::BuildOutput => Some(Box::new(reformats::LogTemplate::new(
             reformats::LogTemplateConfig::default(),
         ))),

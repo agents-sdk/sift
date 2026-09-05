@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 71.3% menos de contexto. 18,485 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 52.6% menos de contexto. 14,016 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los doce escenarios incluidos pasan de **86,467 B a 24,846 B**, con recuperación correcta del original en **10/10 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los doce escenarios incluidos pasan de **88,759 B a 42,037 B**, con recuperación correcta del original en **8/8 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 71.3% más pequeño**, pasando de 86,467 a 24,846 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 52.6% más pequeño**, pasando de 88,759 a 42,037 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -52,19 +52,19 @@ Resultados medidos con las doce [entradas de demo](npm/core/demo/cases) determin
 
 | Escenario | Entrada | Salida | Reducción | Tokens ahorrados estimados | Recuperación |
 | --- | ---: | ---: | ---: | ---: | --- |
-| Array JSON | 18,397 B | 1,888 B | 89.7% | 4,953 | PASS |
-| Pretty JSON | 3,642 B | 2,201 B | 39.6% | 432 | Sin pérdida |
+| Array JSON | 18,397 B | 12,448 B | 32.3% | 1,785 | Sin pérdida |
+| Pretty JSON | 3,642 B | 973 B | 73.3% | 801 | Sin pérdida |
 | Log de compilación | 3,073 B | 1,543 B | 49.8% | 459 | Sin pérdida |
 | Resultados de búsqueda | 10,057 B | 3,227 B | 67.9% | 2,049 | PASS |
 | Git diff | 23,007 B | 7,795 B | 66.1% | 4,564 | PASS |
-| Salida de comandos mixta | 9,240 B | 1,037 B | 88.8% | 2,460 | PASS |
+| Salida de comandos mixta | 9,240 B | 3,879 B | 58.0% | 1,608 | Sin pérdida |
 | Código fuente Rust | 2,282 B | 572 B | 74.9% | 513 | PASS |
 | Texto plano repetido | 2,723 B | 454 B | 83.3% | 680 | PASS |
 | Protección de datos únicos y valores sensibles | 3,125 B | 1,540 B | 50.7% | 476 | PASS |
 | Extracción del contenido HTML | 1,036 B | 337 B | 67.5% | 209 | PASS |
 | Configuración estructurada | 2,698 B | 1,994 B | 26.1% | 211 | PASS |
-| Tabla CSV | 7,187 B | 2,258 B | 68.6% | 1,479 | PASS |
-| **Total** | **86,467 B** | **24,846 B** | **71.3%** | **18,485** | **10/10 casos con pérdida recuperados** |
+| Tabla Markdown | 9,479 B | 7,275 B | 23.3% | 661 | PASS |
+| **Total** | **88,759 B** | **42,037 B** | **52.6%** | **14,016** | **8/8 casos con pérdida recuperados** |
 
 Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los valores similares a credenciales permanecen visibles mientras se comprime el resto del contenido de poco valor; todos los casos con pérdida restauran el original completo. `tokensSaved` usa el estimador integrado de sift.
 
@@ -164,14 +164,14 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 
 | Entrada | Qué conserva o simplifica sift |
 | --- | --- |
-| Arrays JSON | Esquema, muestras representativas y registros importantes o con errores |
+| Arrays JSON | Los arrays uniformes pasan primero a CSV-schema sin pérdida conservando todas las filas; otras estructuras se muestrean recursivamente priorizando registros críticos y anómalos |
 | Logs de compilación y pruebas | Comandos, errores, trazas y resúmenes |
 | Resultados de grep / ripgrep | Coincidencias útiles agrupadas con su contexto de código |
 | Unified diffs | Hunks representativos y estructura de los cambios |
 | Código fuente | Firmas, estructura y las primeras cinco líneas de sentencias AST completas antes de plegar el cuerpo; compatible con Python, JavaScript, TypeScript, Go, Rust, Java, C y C++ |
 | Texto plano | Selección extractiva según query, posición y relevancia, con supresión de duplicados cercanos |
 | Configuración YAML, TOML e INI | Conserva todas las claves, valores y su orden; solo traslada al stash comentarios seguros de línea completa y líneas vacías |
-| Tablas CSV, TSV y Markdown | Analiza estrictamente las columnas y reutiliza SmartCrusher, conservando registros representativos y anómalos |
+| Tablas CSV, TSV y Markdown | Analiza estrictamente las columnas y las pasa a CSV-schema; conserva todos los registros cuando se adopta y deja intacta una entrada ya compacta |
 | JSON con formato y logs repetitivos | Minificación o plantillas sin pérdida cuando es suficiente |
 
 HTML extrae el contenido principal como Markdown legible y elimina scripts, estilos, navegación, barras laterales, anuncios y pies de página; el original completo se puede recuperar desde stash.

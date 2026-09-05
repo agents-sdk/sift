@@ -12,13 +12,15 @@ const rows = Array.from({ length: 200 }, (_, i) => ({
 export const jsonArrayCase: DemoCase = {
   id: 'json-array',
   title: 'JSON 数组工具输出',
-  description: 'smart_crusher 保留异常项和代表性样本，其余原文写入 stash。',
+  description: '规则对象数组先提取 CSV-schema，字段名只声明一次并保留全部记录。',
   input: JSON.stringify(rows),
   query: 'list open issues and worker pool panics',
   expectedType: 'json_array',
-  expectedPath: 'lossy-stash',
+  expectedPath: 'changed',
   mustContain: ['panic in worker pool'],
   verify(output) {
-    assert.match(output, /"state"\s*:\s*"open"/);
+    assert.match(output, /^\[200\]\{/);
+    assert.ok(output.includes('199,'), '最后一条记录必须保留');
+    assert.ok(!output.includes('<<stash:'), '无损 schema 不应写 stash');
   },
 };

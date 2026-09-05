@@ -7,7 +7,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
   <article class="doc container">
     <span class="eyebrow">Docs</span>
     <h1>工作原理</h1>
-    <p>sift 按内容类型分发到专用压缩器(<code>detectContentType</code> 自动判断)。无损优先:先尝试无损重排(JSON minify、日志 Drain 模板化),缩小到 ≤80% 即短路;不够再走有损路径,原文入 stash store。整个流程守住三条安全底线:</p>
+    <p>sift 按内容类型分发到专用压缩器(<code>detectContentType</code> 自动判断)。无损优先:规则 JSON 数组先尝试 CSV-schema(至少节省 15%),其他 JSON minify 与日志 Drain 模板化按原门槛短路;不够再走有损路径,原文入 stash store。整个流程守住三条安全底线:</p>
     <ol>
       <li><strong>只在消息内压缩</strong>,绝不跨消息丢弃内容 —— 每条消息独立处理,tool_use / tool_result 配对受保护。</li>
       <li><strong>冻结前缀字节不动</strong> —— <code>cache_control</code> 标记以下的消息是 prompt cache 锚点,压缩绝不触碰。</li>
@@ -25,7 +25,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
   │                      structured_config / tabular
   │ mixed_content:同一 block 内分段路由;嵌入 JSON span 递归处理
   ▼
-无损重排(JsonMinifier / LogTemplate-Drain)─≤80%─→ 短路返回
+无损重排(JSON CSV-schema ≥15% / minify / LogTemplate-Drain)─→ 短路返回
   ▼
 有损压缩(OffloadTransform)── 原文写 stash store,输出留 «stash:HASH»
   ▼
@@ -34,7 +34,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <h2>压缩器类型</h2>
     <table>
       <tr><th>内容类型</th><th>压缩器</th><th>策略</th><th>无损?</th></tr>
-      <tr><td>json_array</td><td>SmartCrusher</td><td>对象/数组递归压缩,连续对象规范化,长 prose 字段抽取,schema 去重 + 采样 + 错误行优先</td><td>可无损(minify)或有损</td></tr>
+      <tr><td>json_array</td><td>JsonReformatter + SmartCrusher</td><td>规则对象数组先转 CSV-schema 并保留全部行;收益不足或其他结构再递归采样,错误与异常行优先</td><td>优先无损,否则有损可恢复</td></tr>
       <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
       <tr><td>git_diff</td><td>DiffNoise + DiffCompressor</td><td>lockfile / 纯空白变化摘要,unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
@@ -42,7 +42,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,保留签名及前 5 行完整语句后折叠函数体</td><td>有损(可恢复)</td></tr>
       <tr><td>html</td><td>HtmlExtractor</td><td>正文转 Markdown,移除脚本/样式/导航/侧栏/广告/页脚</td><td>有损(可恢复)</td></tr>
       <tr><td>structured_config</td><td>ConfigCompressor</td><td>YAML/TOML/INI 保留全部键值与顺序,安全卸载整行注释/空行;保护 block scalar 与多行字符串</td><td>有损(可恢复)</td></tr>
-      <tr><td>tabular</td><td>TabularCompressor</td><td>严格解析 CSV/TSV/Markdown 表格列,桥接 SmartCrusher,保留代表与异常记录</td><td>有损(可恢复)</td></tr>
+      <tr><td>tabular</td><td>TabularCompressor</td><td>严格解析 CSV/TSV/Markdown 表格列,桥接 CSV-schema;采用时保留全部记录</td><td>信息无损,原表可从 stash 恢复</td></tr>
     </table>
 
     <h3>共用机制</h3>
@@ -88,7 +88,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <h2>设计取舍</h2>
     <ul>
       <li><strong>纯逻辑核心</strong>:压缩逻辑只进 <code>sift</code>,node 桥零逻辑 —— 核心可复用(wasm、CLI 皆可接)。</li>
-      <li><strong>无损优先短路</strong>:能无损解决就不引入信息损失,≤80% 是短路阈值。</li>
+      <li><strong>无损优先短路</strong>:能无损解决就不引入信息损失;CSV-schema 至少节省 15% 即采用,其他重排沿用 20% 门槛。</li>
       <li><strong>token 校验兜底</strong>:有损结果要过 token 估算校验,不达预期自动回退原 block。</li>
       <li><strong>缓存成本感知</strong>:policy 含缓存成本乘数,压缩决策考虑 prompt cache 经济学。</li>
     </ul>

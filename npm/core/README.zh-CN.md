@@ -6,9 +6,9 @@
 
 [English](README.md) · 简体中文 · [项目主页](../../README.zh-CN.md)
 
-### **12 个内置基准场景整体缩小 71.3%**
+### **12 个内置基准场景整体缩小 52.6%**
 
-**86,467 B → 24,846 B** · **估算节省约 18,485 tokens** · **10/10 个有损基准样例成功恢复**
+**88,759 B → 42,037 B** · **估算节省约 14,016 tokens** · **8/8 个有损基准样例成功恢复**
 
 测试口径与完整结果见 [BENCHMARK.md](../../BENCHMARK.md)。当前状态：**Alpha**，1.0 前 API 细节可能变化。
 
@@ -184,13 +184,15 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 
 | 内容 | 示例 | 压缩器 |
 |---|---|---|
-| JSON 数组 | `ls`/API 返回的对象列表、数据库查询结果 | smart_crusher（schema 去重、采样、错误行保留） |
+| JSON 数组 | `ls`/API 返回的对象列表、数据库查询结果 | 规则记录先做无损 CSV-schema 紧凑化并保留全部行；其他结构再由 smart_crusher 采样 |
 | 构建/测试日志 | `pytest`/`npm`/`cargo`/`jest` 输出 | log_compressor（错误/堆栈/摘要保留） |
 | grep/ripgrep 结果 | 代码搜索结果 | search_compressor（按文件/分数抽稀） |
 | git diff | `git diff` / PR diff | diff_compressor（hunk 采样） |
 | HTML | 网页抓取结果 | html_extractor（正文转 Markdown，移除页面噪声） |
 | YAML/TOML/INI | 部署清单、项目配置、服务配置 | config_compressor（保留全部键值，只卸载安全注释和空行） |
-| CSV/TSV/Markdown 表格 | 查询结果、指标列表、清单 | tabular_compressor（严格解析列后复用 SmartCrusher） |
+| CSV/TSV/Markdown 表格 | 查询结果、指标列表、清单 | tabular_compressor（严格解析列后桥接 CSV-schema；采用时保留全部记录） |
+
+CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行；这样可以去掉每条 JSON 记录里重复的字段名，同时不丢记录。
 
 适合的接入位置：
 

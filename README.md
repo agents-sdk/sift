@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **71.3% less context · ~18,485 tokens saved · 10/10 lossy cases recovered**
+### **52.6% less context · ~14,016 tokens saved · 8/8 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -46,7 +46,7 @@ Twelve deterministic [demo inputs](npm/core/demo/cases), measured from the curre
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 86,467 B | 24,846 B | 71.3% | 18,485 | 10/10 restored |
+| 88,759 B | 42,037 B | 52.6% | 14,016 | 8/8 restored |
 
 Credential-like values remain visible while unrelated text can still be compressed; every lossy case restores the exact original. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
@@ -142,7 +142,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 
 | Input | What sift keeps or simplifies |
 | --- | --- |
-| JSON objects and arrays | Compact encoding, nested prose compression, representative samples, and important/error records; concatenated or lightly wrapped JSON is recognized |
+| JSON objects and arrays | Uniform record arrays first become a lossless CSV-schema with every row retained; other shapes use recursive sampling with critical and anomalous records prioritized |
 | Build and test logs | Commands, errors, stack traces, and summaries |
 | grep / ripgrep results | The most useful matches, grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -150,8 +150,10 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | HTML | Main article content rendered as readable Markdown; scripts, styles, navigation, sidebars, ads, and footers are removed |
 | YAML, TOML, and INI config | Every key/value and its order remain visible; safe whole-line comments and blank lines are moved to the recoverable stash |
-| CSV, TSV, and Markdown tables | Strictly parsed columns bridged to SmartCrusher; representative and anomalous records remain visible |
+| CSV, TSV, and Markdown tables | Strict column parsing bridged to CSV-schema; adopted output retains every record, while already-compact input may pass through unchanged |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
+
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. This removes repeated JSON keys without dropping records.
 
 ## Designed for safe adoption
 

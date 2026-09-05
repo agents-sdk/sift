@@ -6,9 +6,9 @@
 
 English · [简体中文](README.zh-CN.md) · [Project overview](../../README.md)
 
-### **71.3% smaller across the twelve bundled benchmark scenarios**
+### **52.6% smaller across the twelve bundled benchmark scenarios**
 
-**86,467 B → 24,846 B** · **~18,485 estimated tokens saved** · **10/10 lossy benchmark cases restored successfully**
+**88,759 B → 42,037 B** · **~14,016 estimated tokens saved** · **8/8 lossy benchmark cases restored successfully**
 
 See the [methodology and complete results](../../BENCHMARK.md). Status: **Alpha**; API details may change before 1.0.
 
@@ -89,7 +89,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 | Input | What remains visible |
 | --- | --- |
-| JSON objects and arrays | Compact encoding, nested prose compression, representative samples, important and error records; concatenated or lightly wrapped JSON is recognized |
+| JSON objects and arrays | Uniform record arrays first become a lossless CSV-schema with every row retained; other shapes use recursive sampling with critical and anomalous records prioritized |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -97,9 +97,11 @@ System, user, and assistant prompts are protected by default. Structured model t
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | HTML | Main article content rendered as readable Markdown; scripts, styles, navigation, sidebars, ads, and footers are removed |
 | YAML, TOML, and INI config | Every key/value and its order remain visible; safe whole-line comments and blank lines move to stash |
-| CSV, TSV, and Markdown tables | Strict column parsing bridged to SmartCrusher; representative and anomalous records remain visible |
+| CSV, TSV, and Markdown tables | Strict column parsing bridged to CSV-schema; adopted output retains every record, while already-compact input may pass through unchanged |
 
 Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
+
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows, removing repeated JSON keys without dropping records.
 
 ## Recovery
 

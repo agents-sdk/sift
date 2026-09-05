@@ -10,12 +10,14 @@ const input = JSON.stringify(rows, null, 2);
 
 export const prettyJsonCase: DemoCase = {
   id: 'pretty-json',
-  title: 'pretty JSON 无损压缩',
-  description: 'JsonMinifier 只移除缩进和换行，解析后的 JSON 必须完全等价。',
+  title: 'pretty JSON 无损紧凑化',
+  description: '规则对象数组提取 CSV-schema，全部 60 条记录保持可见且无需 stash。',
   input,
   expectedType: 'json_array',
   expectedPath: 'changed',
   verify(output) {
-    assert.deepStrictEqual(JSON.parse(output), JSON.parse(input));
+    assert.match(output, /^\[60\]\{id:int,name:string,ok:bool\}/);
+    assert.ok(output.includes('59,item-59,true'), '最后一条记录必须保留');
+    assert.ok(!output.includes('<<stash:'), '无损 schema 不应写 stash');
   },
 };

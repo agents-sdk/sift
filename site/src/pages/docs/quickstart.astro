@@ -83,7 +83,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <h3>把大文件喂给 LLM</h3>
     <p>分析线上问题、读监控数据时,原始文件往往几十 KB 起步。先 <code>siftText</code> 再送入:</p>
     <ul>
-      <li><strong>监控 / 导出的 JSON 对象与数组</strong>:递归 schema 去重 + 采样,异常行优先保留,连续对象也会规范化处理;</li>
+      <li><strong>监控 / 导出的 JSON 对象与数组</strong>:规则记录数组优先转为 CSV-schema 并保留全部行;其他结构递归采样,异常行优先保留;</li>
       <li><strong>构建 / 测试日志</strong>:错误与堆栈全保留,重复 warning 折叠成一条;</li>
       <li><strong>git diff</strong>:lockfile / 纯空白变化摘要,hunk 采样,改动行保留;</li>
       <li><strong>会议纪要等长文本</strong>:按相关性、位置和显著信息抽取代表句段,并抑制近重复内容;完整原文可从 stash 恢复。</li>
@@ -107,7 +107,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
 
     <h3><code>siftText(text, query?, sourcePath?)</code></h3>
     <p>压缩单个字符串(把工具输出原文送进任意 API 之前),返回 <code>text / changed / lossy / stashKey / tokensSaved</code>。使用落盘 stash 时,源码、搜索结果、日志以及显式保守模式的整行纯文本可在省略位置输出 <code>[... 30 lines omitted from file "/home/agent/.sift/stash/HASH", starting at line 32]</code>,代码使用注释形式。文件是完整原文,起始行从 1 计数,不是搜索命中源码的行号。默认纯文本按句子抽取,不伪造行范围,通过末尾 stash 标记恢复。Git Diff 在逐段绝对路径会抵消收益时改用紧凑文件/hunk 汇总。可选的 <code>sourcePath</code> 仅用于按扩展名选择 8 种源码 grammar。单 block 最小 512 字节才参与压缩。</p>
-    <p>无损 minify 不产生 stash 或省略提示。JSON 结构采样、行内片段、标签保护造成映射变化、非本地 store 等情况暂不输出文件行提示。纯文本默认按 query 相关性、位置、显著信息和近重复抑制进行抽取,保留的句段逐字来自原文。</p>
+    <p>无损 CSV-schema / minify 不产生 stash 或省略提示。JSON 结构采样、行内片段、标签保护造成映射变化、非本地 store 等情况暂不输出文件行提示。纯文本默认按 query 相关性、位置、显著信息和近重复抑制进行抽取,保留的句段逐字来自原文。</p>
     <p>日志首个非空行、可识别的命令回显(如 <code>$ cargo build</code>、shell tracing、npm script、PowerShell 提示符)及显式续行强制保留,不会被普通日志行数预算截掉或隐藏在模板中。能从 stash 恢复不等于允许省略执行命令。</p>
 
     <h3><code>retrieve(key)</code></h3>

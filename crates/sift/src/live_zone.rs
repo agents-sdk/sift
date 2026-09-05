@@ -230,7 +230,7 @@ fn route_mixed_fallback(text: &str, ctx: &CompressionContext) -> Option<String> 
 }
 
 /// 单个 block 文本的完整压缩流程（纯函数，不触碰 JSON 结构）：
-/// 保护标签 → 无损 reformat（缩够 ≤80% 即短路）→ 有损压缩 → token 校验。
+/// 保护标签 → 无损 reformat（按变换收益门槛短路）→ 有损压缩 → token 校验。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_block_text(
     text: &str,
@@ -268,7 +268,9 @@ pub(crate) fn process_block_text(
     // JSON 空白剥离 / 日志模板挖掘——输出可完全重建，无需 stash。
     let mut current = protected_text.clone();
     let mut reformatted = false;
+    let mut reformat_max_ratio = 0.8;
     if let Some(reformatter) = reformat_for(crate::content::detect_content_type(&current)) {
+        reformat_max_ratio = reformatter.max_output_ratio();
         if let Ok(refmt) = reformatter.apply(&current, ctx) {
             if refmt.len() < current.len() {
                 reformatted = true;
@@ -286,9 +288,9 @@ pub(crate) fn process_block_text(
         Some(BlockOutcome::Lossless(final_text, saved))
     };
 
-    // 无损已缩够（≤ 80% 原体积）则跳过有损压缩，避免不必要的 stash 卸载。
+    // 无损已达到该重排器的收益门槛则跳过有损压缩，避免不必要的 stash 卸载。
     let reformat_ratio = tokenizer.count_text(&current) as f64 / original_tokens.max(1) as f64;
-    if reformatted && reformat_ratio <= 0.8 {
+    if reformatted && reformat_ratio <= reformat_max_ratio {
         if let Some(outcome) = commit_lossless(&current) {
             return outcome;
         }
@@ -458,9 +460,7 @@ mod tests {
 
     #[test]
     fn mixed_bash_output_routes_per_section() {
-        // bash 输出：命令回显（文本）+ 大 JSON 数组（jq 结果）+ 尾部文本。
-        // 整块 detect 落到 PlainText → 混合分段路由：JSON 段被压缩，
-        // 其余文本段原样保留，整体带 stash 标记。
+        // JSON 主体带轻量 wrapper：无损 schema 紧凑化后保留首尾文本。
         let mut rows = Vec::new();
         for i in 0..200 {
             rows.push(json!({"id": i, "name": format!("item-{}", i), "status": "ok"}));
@@ -480,25 +480,19 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.changed, "outcome={:?}", outcome);
-        assert!(
-            outcome.stash_stored >= 1,
-            "混合路由应有损+stash: {outcome:?}"
-        );
+        assert_eq!(outcome.stash_stored, 0, "无损 schema 不应写 stash");
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
-        // 文本段保留、JSON 段被压、含取回标记。
+        // 文本 wrapper 保留，JSON 主体变成 schema，且无取回标记。
         assert!(txt.contains("$ gh api repos/x/y/issues"));
-        assert!(txt.contains("<<stash:"));
+        assert!(txt.contains("[200]{id:int,name:string,status:string}"));
+        assert!(txt.contains("done, 200 rows above"));
+        assert!(!txt.contains("<<stash:"));
         assert!(txt.len() < mixed.len());
-        // 原文可回取（含完整 JSON）。
-        let key_start = txt.rfind("<<stash:").unwrap();
-        let key = &txt[key_start + "<<stash:".len()..txt.len() - 2];
-        assert_eq!(store.get(key).unwrap(), mixed);
     }
 
     #[test]
     fn lossless_reformat_short_circuits_stash() {
-        // pretty-print 的 JSON（大量缩进空白）：JsonMinifier 无损剥离后
-        // ≤80% 体积 → 走 Lossless 短路，不写 stash、无取回标记。
+        // pretty-print 的规则 JSON 数组优先转为 CSV-schema，完整保留所有行。
         let mut rows = Vec::new();
         for i in 0..50 {
             rows.push(json!({"id": i, "name": format!("item-{}", i), "status": "ok"}));
@@ -517,10 +511,58 @@ mod tests {
         // 无损路径：不写 stash store。
         assert_eq!(outcome.stash_stored, 0, "无损短路不应写 stash: {outcome:?}");
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
-        // 无损结果不含取回标记，且仍可解析回等价 JSON。
+        // 无损结果不含取回标记，schema 中保留首尾记录。
         assert!(!txt.contains("<<stash:"), "无损路径不应有标记: {txt}");
-        let parsed: serde_json::Value = serde_json::from_str(txt).unwrap();
-        assert_eq!(parsed, serde_json::Value::Array(rows.clone()));
+        assert!(txt.starts_with("[50]{id:int,name:string,status:string}\n"));
+        assert!(txt.contains("0,item-0,ok"));
+        assert!(txt.contains("49,item-49,ok"));
+    }
+
+    #[test]
+    fn json_schema_compaction_keeps_every_row_without_stash() {
+        let rows = (0..50)
+            .map(|index| json!({"id": index, "name": format!("item-{index}"), "status": "ok"}))
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+        let ctx = CompressionContext::default();
+        let protector = TagProtector::new(TagProtectorConfig::default());
+        let tokenizer = EstimatingCounter::new();
+
+        let BlockOutcome::Lossless(output, _) =
+            process_block_text(&raw, &store, &ctx, &protector, &tokenizer)
+        else {
+            panic!("规则对象数组应由无损 CSV-schema 路径短路");
+        };
+        assert!(output.starts_with("[50]{id:int,name:string,status:string}\n"));
+        assert!(output.contains("49,item-49,ok"));
+        assert!(!output.contains("<<stash:"));
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn sparse_json_schema_remains_stash_recoverable() {
+        let mut rows = (0..40)
+            .map(|index| json!({"id": index, "tag": format!("node-{index}")}))
+            .collect::<Vec<_>>();
+        rows[17].as_object_mut().unwrap().remove("tag");
+        let raw = serde_json::to_string(&rows).unwrap();
+        let mut body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": raw}
+        ]}]});
+        let store = InMemoryStashStore::new();
+
+        let outcome = compress_live_zone(&mut body, Some(&store), None);
+
+        assert!(outcome.changed, "{outcome:?}");
+        assert_eq!(outcome.stash_stored, 1);
+        let output = body["messages"][0]["content"][0]["content"]
+            .as_str()
+            .unwrap();
+        assert!(output.starts_with("[40]{id:int,tag:string?}\n"));
+        let marker_start = output.rfind("<<stash:").unwrap();
+        let key = &output[marker_start + "<<stash:".len()..output.len() - 2];
+        assert_eq!(store.get(key).as_deref(), Some(raw.as_str()));
     }
 
     #[test]
@@ -544,16 +586,13 @@ mod tests {
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         // tool_result 的 content 是文本块，应被识别为 JSON 数组并压缩。
         assert!(outcome.blocks_compressed >= 1, "outcome={:?}", outcome);
-        assert!(outcome.stash_stored >= 1);
-        // 压缩后 text 含取回标记。
+        assert_eq!(outcome.stash_stored, 0);
+        // 规则数组无损转为 CSV-schema，不需要取回标记。
         let blocks = b["messages"][2]["content"].as_array().unwrap();
         let txt = blocks[0]["content"].as_str().unwrap();
-        assert!(txt.contains("<<stash:"));
-        // 标记可回取原文：从尾部 <<stash:KEY>> 提取 key 查 store。
-        let marker_start = txt.rfind("<<stash:").unwrap();
-        let key = &txt[marker_start + "<<stash:".len()..txt.len() - 2];
-        let restored = store.get(key).expect("原文应可从 stash store 回取");
-        assert_eq!(restored, serde_json::to_string(&rows).unwrap());
+        assert!(txt.starts_with("[200]{id:int,name:string,status:string}\n"));
+        assert!(txt.contains("199,item-199,ok"));
+        assert!(!txt.contains("<<stash:"));
     }
 
     #[test]
@@ -653,9 +692,8 @@ mod tests {
     }
 
     #[test]
-    fn stash_stores_original_with_custom_tags() {
-        // 大 JSON 数组，多数行 note 重复（可去重压缩），少数行含自定义标签。
-        // stash 应存保护前的完整原文（含标签）。
+    fn lossless_schema_preserves_custom_tags() {
+        // 标签先占位保护，schema 紧凑化后必须恢复到可见输出。
         let mut rows = Vec::new();
         for i in 0..200 {
             let note = if i % 50 == 0 {
@@ -676,15 +714,12 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.changed, "outcome={:?}", outcome);
-        assert!(outcome.stash_stored >= 1);
+        assert_eq!(outcome.stash_stored, 0);
 
         let txt = b["messages"][0]["content"][0]["content"].as_str().unwrap();
-        let marker_start = txt.rfind("<<stash:").unwrap();
-        let key = &txt[marker_start + "<<stash:".len()..txt.len() - 2];
-        // retrieve 取回的是保护前的完整原文，含自定义标签。
-        let restored = store.get(key).expect("原文应可回取");
-        assert_eq!(restored, original);
-        assert!(restored.contains("<meta>"), "原文应含自定义标签");
+        assert!(txt.contains("<meta>important 0</meta>"));
+        assert!(txt.contains("<meta>important 150</meta>"));
+        assert!(!txt.contains("<<stash:"));
     }
 
     #[test]
@@ -710,17 +745,15 @@ mod tests {
         let store = InMemoryStashStore::new();
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.blocks_compressed >= 1, "outcome={:?}", outcome);
-        assert!(outcome.stash_stored >= 1);
+        assert_eq!(outcome.stash_stored, 0);
         let txt = b["messages"][2]["content"].as_str().unwrap();
-        assert!(txt.contains("<<stash:"));
+        assert!(txt.starts_with("[200]{id:int,name:string,status:string}\n"));
+        assert!(txt.contains("199,item-199,ok"));
+        assert!(!txt.contains("<<stash:"));
         assert!(txt.len() < raw.len());
         // 消息结构与 tool_call_id 不变。
         assert_eq!(b["messages"][2]["tool_call_id"], json!("c1"));
         assert_eq!(b["messages"].as_array().unwrap().len(), 4);
-        // 原文可回取。
-        let marker_start = txt.rfind("<<stash:").unwrap();
-        let key = &txt[marker_start + "<<stash:".len()..txt.len() - 2];
-        assert_eq!(store.get(key).unwrap(), raw);
     }
 
     #[test]
@@ -772,14 +805,12 @@ mod tests {
         let outcome = compress_live_zone(&mut b, Some(&store), None);
         assert!(outcome.blocks_compressed >= 1, "outcome={:?}", outcome);
         let out = b["input"][2]["output"].as_str().unwrap();
-        assert!(out.contains("<<stash:"));
+        assert!(out.starts_with("[150]{idx:int,state:string,tag:string}\n"));
+        assert!(out.contains("149,active,t"));
+        assert!(!out.contains("<<stash:"));
         assert!(out.len() < raw.len());
         // function_call（模型发出的调用）未被触碰。
         assert_eq!(b["input"][1]["arguments"], json!("{}"));
-        // 原文可回取。
-        let marker_start = out.rfind("<<stash:").unwrap();
-        let key = &out[marker_start + "<<stash:".len()..out.len() - 2];
-        assert_eq!(store.get(key).unwrap(), raw);
     }
 
     #[test]
@@ -808,7 +839,7 @@ mod tests {
         assert!(b["messages"][2]["content"]
             .as_str()
             .unwrap()
-            .contains("<<stash:"));
+            .starts_with("[200]{id:int,status:string}\n"));
     }
 
     #[test]
@@ -826,7 +857,7 @@ mod tests {
         assert!(b["input"][2]["output"]
             .as_str()
             .unwrap()
-            .contains("<<stash:"));
+            .starts_with("[200]{id:int,status:string}\n"));
     }
 
     #[test]
@@ -851,7 +882,9 @@ mod tests {
 
     #[test]
     fn stash_write_failure_reverts_lossy_block() {
-        let rows: Vec<Value> = (0..200).map(|i| json!({"id": i, "status": "ok"})).collect();
+        let rows: Vec<Value> = (0..200)
+            .map(|i| json!(format!("repeated diagnostic value {}", i % 8)))
+            .collect();
         let raw = serde_json::to_string(&rows).unwrap();
         let mut b = json!({"messages": [
             {"role": "user", "content": [

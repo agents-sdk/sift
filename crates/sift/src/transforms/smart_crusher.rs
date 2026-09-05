@@ -6,6 +6,7 @@
 //! stash store、TOIN/feedback/telemetry 等子系统）。本实现不做 parity，只做
 //! **算法行为等价**：同样的输入得到信息等价的压缩输出——
 //!
+//! - 规则对象数组先尝试 CSV-schema 紧凑化，达到 15% 收益时保留全部行；
 //! - 错误行（error/failed/fatal/... 关键字）永不丢弃；
 //! - 罕见 status 值（Pareto 80% 主流值之外的取值）保留；
 //! - 结构异类（出现在 <20% 行中的字段）保留；
@@ -14,8 +15,8 @@
 //! - 被丢弃的行在输出尾部的 `_crushed` 哨兵对象中标注（计数 + 采样）。
 //!
 //! 相对参考实现的简化：
-//! - 无 lossless compaction 阶段（CSV/buckets）、无 stash store / prose hook /
-//!   observer / constraint trait 对象（错误行与结构异类保留直接内联）；
+//! - CSV-schema 已覆盖规则/稀疏对象数组与统一嵌套字段，但尚无异构 buckets、
+//!   opaque cell 独立卸载、observer / constraint trait 对象；
 //! - 自适应 K 用简单的 `clamp(n/4, 3, max_items)` 代替 Kneedle 算法；
 //! - 内容哈希用 blake3（允许依赖）代替 md5；
 //! - 查询锚点提取用无 regex 的手写扫描器（UUID / 4 位以上数字 / 邮箱 /
@@ -54,6 +55,8 @@ pub struct SmartCrusherConfig {
     pub dedup_identical_items: bool,
     /// dropped 采样在哨兵中最多展示的行数。
     pub max_dropped_sample: usize,
+    /// CSV-schema 无损紧凑化至少需要达到的字节节省比例。
+    pub lossless_min_savings_ratio: f64,
 }
 
 impl Default for SmartCrusherConfig {
@@ -69,6 +72,7 @@ impl Default for SmartCrusherConfig {
             preserve_change_points: true,
             dedup_identical_items: true,
             max_dropped_sample: 3,
+            lossless_min_savings_ratio: 0.15,
         }
     }
 }
@@ -1636,6 +1640,16 @@ impl SmartCrusher {
     ) -> Result<(String, bool), TransformError> {
         let payload =
             crate::content::parse_json_payload(content).ok_or(TransformError::InvalidInput)?;
+        if let Value::Array(items) = &payload.value {
+            if let Some(compacted) = super::json_compactor::try_compact_csv_schema(
+                items,
+                self.config.min_items_to_analyze,
+                self.config.lossless_min_savings_ratio,
+                false,
+            ) {
+                return Ok((compacted, true));
+            }
+        }
         let (processed, _info) = process_value(&payload.value, 0, query, &self.config);
         let compact = serde_json::to_string(&processed)
             .map_err(|e| TransformError::Internal(e.to_string()))?;
@@ -1837,7 +1851,11 @@ mod tests {
         let mut items: Vec<Value> = (0..60).map(|i| json!({"id": i, "status": "ok"})).collect();
         items.push(json!({"id": 60, "status": "error"}));
         let input = serde_json::to_string(&items).unwrap();
-        let result = crusher().apply(&input, &ctx(None)).expect("应可压缩");
+        let lossy = SmartCrusher::new(SmartCrusherConfig {
+            lossless_min_savings_ratio: 1.0,
+            ..SmartCrusherConfig::default()
+        });
+        let result = lossy.apply(&input, &ctx(None)).expect("应可压缩");
         assert_eq!(result.original, input, "原文应原样返回（offload store 用）");
         assert!(
             result.compressed.contains("_dropped_count"),
@@ -1860,6 +1878,64 @@ mod tests {
                 .any(|item| item["status"] == json!("error")),
             "错误行必须在输出中"
         );
+    }
+
+    #[test]
+    fn uniform_object_array_prefers_lossless_csv_schema() {
+        let items: Vec<Value> = (0..50)
+            .map(|index| {
+                json!({
+                    "id": index,
+                    "name": format!("service-{index}"),
+                    "status": "healthy"
+                })
+            })
+            .collect();
+        let input = serde_json::to_string(&items).unwrap();
+
+        let (compressed, modified) = crusher().crush(&input, None).unwrap();
+
+        assert!(modified);
+        assert!(
+            compressed.starts_with("[50]{id:int,name:string,status:string}\n"),
+            "got: {compressed}"
+        );
+        assert!(!compressed.contains("_crushed"));
+        assert!(compressed.contains("49,service-49,healthy"));
+    }
+
+    #[test]
+    fn csv_schema_marks_sparse_columns_and_quotes_cells() {
+        let mut items: Vec<Value> = (0..30)
+            .map(|index| {
+                json!({
+                    "id": index,
+                    "message": if index == 7 { "latency, high" } else { "healthy" },
+                    "tag": format!("node-{index}")
+                })
+            })
+            .collect();
+        items[12].as_object_mut().unwrap().remove("tag");
+        let input = serde_json::to_string(&items).unwrap();
+
+        let (compressed, _) = crusher().crush(&input, None).unwrap();
+
+        assert!(compressed.starts_with("[30]{id:int,message:string,tag:string?}\n"));
+        assert!(compressed.contains(r#"7,"latency, high",node-7"#));
+        assert!(compressed.contains("12,healthy,\n"));
+    }
+
+    #[test]
+    fn csv_schema_below_savings_threshold_falls_back_to_existing_path() {
+        let large = "x".repeat(2_000);
+        let items: Vec<Value> = (0..20)
+            .map(|index| json!({"x": format!("{large}{index}")}))
+            .collect();
+        let input = serde_json::to_string(&items).unwrap();
+
+        let (compressed, _) = crusher().crush(&input, None).unwrap();
+
+        assert!(!compressed.starts_with("[20]{"));
     }
 
     #[test]
@@ -2095,9 +2171,11 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let result = crusher().apply(&input, &ctx(None)).unwrap();
-        let parsed: Value = serde_json::from_str(&result.compressed).unwrap();
-        assert!(parsed.is_array());
-        assert!(result.compressed.contains("_dropped_count"));
+        assert!(result
+            .compressed
+            .starts_with("[40]{id:int,status:string}\n"));
+        assert!(result.compressed.contains("39,ok"));
+        assert!(!result.compressed.contains("_dropped_count"));
     }
 
     #[test]

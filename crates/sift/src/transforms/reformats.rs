@@ -1,7 +1,9 @@
-//! 无损重排变换（`ReformatTransform`）：`JsonMinifier` 与 `LogTemplate`。
+//! 无损重排变换（`ReformatTransform`）：JSON 紧凑化与 `LogTemplate`。
 //!
-//! 两者都实现 [`crate::transforms::ReformatTransform`]：输出可完全重建原文，
+//! 这些重排器都实现 [`crate::transforms::ReformatTransform`]：输出保持信息等价，
 //! 无需 stash 卸载。包含：
+//! - `JsonReformatter` 对规则对象数组优先使用 CSV-schema，达到 15% 收益即
+//!   保留全部行并短路；其他 JSON 再交给 `JsonMinifier`；
 //! - `JsonMinifier` 语义一致：`serde_json` 先 parse 再紧凑序列化，取更短者，
 //!   绝不膨胀输出；
 //! - `LogTemplate` 语义一致：Drain 式模板挖掘，把变化 token 替换为 `<*>`，
@@ -14,6 +16,66 @@
 
 use crate::content::ContentType;
 use crate::transforms::{CompressionContext, ReformatTransform, TransformError};
+
+const JSON_SCHEMA_MIN_ITEMS: usize = 5;
+
+// ─── JsonReformatter ────────────────────────────────────────────────────────
+
+/// JSON 无损优先重排：规则对象数组优先转成 CSV-schema，其余 JSON 做 minify。
+#[derive(Debug, Clone, Copy)]
+pub struct JsonReformatter {
+    min_savings_ratio: f64,
+}
+
+impl Default for JsonReformatter {
+    fn default() -> Self {
+        Self {
+            min_savings_ratio: 0.15,
+        }
+    }
+}
+
+impl ReformatTransform for JsonReformatter {
+    fn name(&self) -> &'static str {
+        "json_reformatter"
+    }
+
+    fn applies_to(&self) -> ContentType {
+        ContentType::JsonArray
+    }
+
+    fn max_output_ratio(&self) -> f64 {
+        1.0 - self.min_savings_ratio
+    }
+
+    fn apply(&self, input: &str, ctx: &CompressionContext) -> Result<String, TransformError> {
+        let payload =
+            crate::content::parse_json_payload(input).ok_or(TransformError::InvalidInput)?;
+        if let serde_json::Value::Array(items) = &payload.value {
+            if let Some(compacted) = super::json_compactor::try_compact_csv_schema(
+                items,
+                JSON_SCHEMA_MIN_ITEMS,
+                self.min_savings_ratio,
+                true,
+            ) {
+                if payload.start == 0 && payload.end == input.len() {
+                    return Ok(compacted);
+                }
+                let mut output = String::with_capacity(input.len());
+                output.push_str(&input[..payload.start]);
+                output.push_str(&compacted);
+                output.push_str(&input[payload.end..]);
+                return Ok(output);
+            }
+        }
+        let minified = JsonMinifier.apply(input, ctx)?;
+        if minified.len() * 5 <= input.len() * 4 {
+            Ok(minified)
+        } else {
+            Ok(input.to_string())
+        }
+    }
+}
 
 // ─── JsonMinifier ───────────────────────────────────────────────────────────
 
@@ -319,6 +381,35 @@ mod tests {
 
     fn ctx() -> CompressionContext {
         CompressionContext::default()
+    }
+
+    #[test]
+    fn json_reformatter_prefers_csv_schema_for_uniform_records() {
+        let input = serde_json::to_string(
+            &(0..40)
+                .map(|index| {
+                    serde_json::json!({"id": index, "name": format!("item-{index}"), "status": "ok"})
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let reformatter = JsonReformatter::default();
+        let output = reformatter.apply(&input, &ctx()).unwrap();
+        assert!(output.starts_with("[40]{id:int,name:string,status:string}\n"));
+        assert!(output.contains("39,item-39,ok"));
+        assert_eq!(reformatter.max_output_ratio(), 0.85);
+    }
+
+    #[test]
+    fn json_reformatter_does_not_call_sparse_or_null_schema_lossless() {
+        let sparse = r#"[{"id":1,"tag":"a"},{"id":2},{"id":3,"tag":null},{"id":4,"tag":"d"},{"id":5,"tag":"e"}]"#;
+        let output = JsonReformatter::default().apply(sparse, &ctx()).unwrap();
+        assert_eq!(output, sparse);
+        assert!(!output.starts_with("[5]{"));
+
+        let mixed = r#"[{"value":1},{"value":"1"},{"value":2},{"value":"2"},{"value":3}]"#;
+        let output = JsonReformatter::default().apply(mixed, &ctx()).unwrap();
+        assert_eq!(output, mixed);
     }
 
     // ─── JsonMinifier ───────────────────────────────────────────────────────

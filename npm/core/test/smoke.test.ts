@@ -49,17 +49,14 @@ assert.strictEqual(result.frozenMessages, 1);
 // 大 JSON 工具结果被压缩
 assert.strictEqual(result.changed, true);
 assert.ok(result.blocksCompressed >= 1, `blocksCompressed=${result.blocksCompressed}`);
-assert.ok(result.stashStored >= 1, `stashStored=${result.stashStored}`);
+assert.strictEqual(result.stashStored, 0, `stashStored=${result.stashStored}`);
 assert.ok(result.tokensSaved > 0, `tokensSaved=${result.tokensSaved}`);
 
-// 压缩后的 body 含取回标记，且可通过 retrieve 恢复原文
+// 规则对象数组无损转为 CSV-schema，保留全部行且无需 stash。
 const compressedContent = (result.body as any).messages[2].content[0].content as string;
-assert.ok(compressedContent.includes('<<stash:'), '应含 <<stash: 标记');
-const key = compressedContent.slice(
-  compressedContent.lastIndexOf('<<stash:') + '<<stash:'.length,
-  compressedContent.length - 2,
-);
-assert.strictEqual(retrieve(key), bigJson);
+assert.ok(compressedContent.startsWith('[200]{id:int,name:string,status:string}\n'));
+assert.ok(compressedContent.includes('199,'), '最后一行必须保留');
+assert.ok(!compressedContent.includes('<<stash:'), '无损 schema 不应含 stash 标记');
 assert.strictEqual(retrieve('../outside-stash'), null, '非法 stash key 必须被拒绝');
 
 // 长纪要按相关性抽取；有损结果必须能从 stash 逐字恢复。
@@ -264,9 +261,10 @@ assert.strictEqual(
   configInput,
 );
 const csvInput = [
-  'id,service,region,status,latency_ms',
+  '| id | service | region | status | latency_ms |',
+  '| --- | --- | --- | --- | --- |',
   ...Array.from({ length: 120 }, (_, i) =>
-    `${i},service-${i},us-east-1,${i === 97 ? 'degraded' : 'healthy'},${i === 97 ? 480 : 40 + i}`,
+    `| ${i} | service-${i} | us-east-1 | ${i === 97 ? 'degraded' : 'healthy'} | ${i === 97 ? 480 : 40 + i} |`,
   ),
 ].join('\n');
 assert.strictEqual(detectContentType(csvInput), 'tabular');
@@ -295,12 +293,8 @@ const chatResult = siftRequest(chatBody);
 assert.strictEqual(chatResult.frozenMessages, 0, 'OpenAI 格式无冻结前缀');
 assert.ok(chatResult.changed, 'tool 消息应被压缩');
 const chatToolContent = (chatResult.body as any).messages[2].content as string;
-assert.ok(chatToolContent.includes('<<stash:'), 'tool content 应含取回标记');
-const chatKey = chatToolContent.slice(
-  chatToolContent.lastIndexOf('<<stash:') + '<<stash:'.length,
-  chatToolContent.length - 2,
-);
-assert.strictEqual(retrieve(chatKey), bigJson);
+assert.ok(chatToolContent.startsWith('[200]{id:int,name:string,status:string}\n'));
+assert.ok(!chatToolContent.includes('<<stash:'), '无损 schema 不应含 stash 标记');
 
 // ── OpenAI Responses API 格式 ──
 const responsesBody = {
@@ -316,12 +310,8 @@ const responsesResult = siftRequest(responsesBody);
 assert.strictEqual(responsesResult.frozenMessages, 0);
 assert.ok(responsesResult.changed, 'function_call_output 应被压缩');
 const fnOutput = (responsesResult.body as any).input[2].output as string;
-assert.ok(fnOutput.includes('<<stash:'), 'output 应含取回标记');
-const fnKey = fnOutput.slice(
-  fnOutput.lastIndexOf('<<stash:') + '<<stash:'.length,
-  fnOutput.length - 2,
-);
-assert.strictEqual(retrieve(fnKey), bigJson);
+assert.ok(fnOutput.startsWith('[200]{id:int,name:string,status:string}\n'));
+assert.ok(!fnOutput.includes('<<stash:'), '无损 schema 不应含 stash 标记');
 // function_call（模型发出的调用）未被触碰
 assert.strictEqual((responsesResult.body as any).input[1].arguments, '{}');
 
@@ -363,7 +353,7 @@ const customStashDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sift-custom-stash-
 try {
   const customSift = createSift({ stashDir: customStashDir });
   const customJson = JSON.stringify(
-    rows.map((row) => ({ ...row, customStoreMarker: `custom-${row.id}` })),
+    Array.from({ length: 200 }, (_, i) => `custom-store diagnostic value ${i % 8}`),
   );
   const { siftText: customSiftText } = customSift;
   const customResult = customSiftText(customJson);

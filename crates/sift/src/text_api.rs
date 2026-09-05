@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn large_json_array_lossy_with_marker() {
+    fn large_uniform_json_array_uses_lossless_schema() {
         let mut rows = Vec::new();
         for i in 0..200 {
             rows.push(json!({"id": i, "name": format!("item-{}", i), "status": "ok"}));
@@ -134,19 +134,22 @@ mod tests {
         let store = InMemoryStashStore::new();
         let r = compress_text(&raw, Some(&store), None);
         assert!(r.changed);
-        assert!(r.lossy);
-        assert!(r.text.contains("<<stash:"));
+        assert!(!r.lossy);
+        assert!(r.stash_key.is_none());
+        assert!(r
+            .text
+            .starts_with("[200]{id:int,name:string,status:string}\n"));
+        assert!(r.text.contains("199,item-199,ok"));
+        assert!(!r.text.contains("<<stash:"));
         assert!(r.text.len() < raw.len());
         assert!(r.tokens_saved > 0);
         let tokenizer = EstimatingCounter::new();
         assert_eq!(
             r.tokens_saved,
             tokenizer.count_text(&raw) as i64 - tokenizer.count_text(&r.text) as i64,
-            "tokens_saved 必须包含最终 stash marker 的成本"
+            "tokens_saved 必须按最终输出计算"
         );
-        // 原文可回取。
-        let key = r.stash_key.as_ref().unwrap();
-        assert_eq!(store.get(key).unwrap(), raw);
+        assert!(store.is_empty());
     }
 
     #[test]
@@ -194,9 +197,10 @@ mod tests {
         assert!(!r.lossy, "无损短路不应写 stash: {r:?}");
         assert!(r.stash_key.is_none());
         assert!(!r.text.contains("<<stash:"));
-        // 无损结果仍可解析回等价 JSON。
-        let parsed: serde_json::Value = serde_json::from_str(&r.text).unwrap();
-        assert_eq!(parsed, serde_json::Value::Array(rows));
+        assert!(r
+            .text
+            .starts_with("[50]{id:int,name:string,status:string}\n"));
+        assert!(r.text.contains("49,item-49,ok"));
     }
 
     #[test]
@@ -205,13 +209,14 @@ mod tests {
         let raw = serde_json::to_string(&rows).unwrap();
         let store = InMemoryStashStore::new();
         let first = compress_text(&raw, Some(&store), None);
-        assert!(first.lossy);
-        assert_eq!(first.text.matches("<<stash:").count(), 1);
+        assert!(!first.lossy);
+        assert!(first.text.starts_with("[200]{id:int,status:string}\n"));
+        assert_eq!(first.text.matches("<<stash:").count(), 0);
 
         let second = compress_text(&first.text, Some(&store), None);
         assert!(!second.changed);
         assert_eq!(second.text, first.text);
-        assert_eq!(second.text.matches("<<stash:").count(), 1);
+        assert_eq!(second.text.matches("<<stash:").count(), 0);
     }
 
     #[test]
@@ -437,25 +442,27 @@ mod tests {
 
     #[test]
     fn tabular_text_uses_smart_crusher_and_stashes_exact_original() {
-        let mut csv = String::from("id,service,region,status,owner,latency_ms\n");
+        let mut table = String::from(
+            "| id | service | region | status | owner | latency_ms |\n| --- | --- | --- | --- | --- | --- |\n",
+        );
         for index in 0..120 {
             let status = if index == 97 { "degraded" } else { "healthy" };
             let latency = if index == 97 { 240 } else { 40 + index };
-            csv.push_str(&format!(
-                "{index},service-{index},us-east-1,{status},platform,{latency}\n"
+            table.push_str(&format!(
+                "| {index} | service-{index} | us-east-1 | {status} | platform | {latency} |\n"
             ));
         }
         let store = InMemoryStashStore::new();
 
-        let result = compress_text(&csv, Some(&store), Some("degraded latency"));
+        let result = compress_text(&table, Some(&store), Some("degraded latency"));
 
         assert!(result.changed, "{result:?}");
         assert!(result.lossy);
         assert!(result.text.contains("service"));
         assert!(result.text.contains("degraded"));
-        assert!(result.text.len() < csv.len());
+        assert!(result.text.len() < table.len());
         let key = result.stash_key.as_deref().unwrap();
-        assert_eq!(store.get(key).as_deref(), Some(csv.as_str()));
+        assert_eq!(store.get(key).as_deref(), Some(table.as_str()));
     }
 
     #[test]
