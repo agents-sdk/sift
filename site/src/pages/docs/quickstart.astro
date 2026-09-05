@@ -83,7 +83,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <h3>把大文件喂给 LLM</h3>
     <p>分析线上问题、读监控数据时,原始文件往往几十 KB 起步。先 <code>siftText</code> 再送入:</p>
     <ul>
-      <li><strong>监控 / 导出的 JSON 对象与数组</strong>:同构记录优先转为 CSV-schema;有清晰分类字段的异构记录按 schema buckets 分组,两者都保留全部行;其余结构递归采样;</li>
+      <li><strong>监控 / 导出的 JSON 对象与数组</strong>:同构记录转为 CSV-schema,异构记录可按 schema buckets 分组;两者保留全部行,超过 256 B 的 opaque 单元格可用独立 stash marker 直接取回;其余结构递归采样;</li>
       <li><strong>构建 / 测试日志</strong>:错误与堆栈全保留,重复 warning 折叠成一条;</li>
       <li><strong>git diff</strong>:lockfile / 纯空白变化摘要,hunk 采样,改动行保留;</li>
       <li><strong>会议纪要等长文本</strong>:按相关性、位置和显著信息抽取代表句段,并抑制近重复内容;完整原文可从 stash 恢复。</li>

@@ -89,7 +89,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 | Input | What remains visible |
 | --- | --- |
-| JSON objects and arrays | Uniform records first become a lossless CSV-schema; heterogeneous records with a clean categorical field are split into recoverable schema buckets. Both retain every row; remaining shapes use recursive sampling |
+| JSON objects and arrays | Uniform records become CSV-schema; heterogeneous records can split into schema buckets. Both retain every row, while opaque cells over 256 bytes move to their own recoverable stash markers; remaining shapes use recursive sampling |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -101,7 +101,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
 
-CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category, avoiding mostly-empty union columns without dropping records.
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category. Long opaque string, HTML, and base64 cells become markers such as `<<stash:HASH>>[html,2.1KB]`; each marker retrieves that cell directly, while the trailing marker still retrieves the complete original input.
 
 ## Recovery
 

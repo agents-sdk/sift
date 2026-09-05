@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use super::DeferredStash;
+
 const CORE_FIELD_FRACTION: f64 = 0.8;
 const HETEROGENEOUS_CORE_RATIO: f64 = 0.6;
 const MIN_BUCKETS: usize = 2;
@@ -21,12 +23,18 @@ struct Column {
     nullable: bool,
 }
 
+pub(super) struct JsonCompaction {
+    pub output: String,
+    pub deferred_stashes: Vec<DeferredStash>,
+}
+
 pub(super) fn try_compact_csv_schema(
     items: &[Value],
     min_items: usize,
     min_savings_ratio: f64,
     require_lossless_shape: bool,
-) -> Option<String> {
+    offload_opaque: bool,
+) -> Option<JsonCompaction> {
     if items.len() < min_items || !items.iter().all(Value::is_object) {
         return None;
     }
@@ -34,20 +42,29 @@ pub(super) fn try_compact_csv_schema(
         return None;
     }
 
+    let mut deferred_stashes = Vec::new();
     let output = if require_lossless_shape {
-        render_table(items, false)?
-    } else if let Some(bucketed) = render_buckets(items) {
+        render_table(items, false, false, &mut deferred_stashes)?
+    } else if let Some(bucketed) = render_buckets(items, offload_opaque, &mut deferred_stashes) {
         bucketed
     } else {
-        render_table(items, true)?
+        render_table(items, true, offload_opaque, &mut deferred_stashes)?
     };
 
     let compact_json = serde_json::to_string(items).ok()?;
     let savings_ratio = 1.0 - output.len() as f64 / compact_json.len().max(1) as f64;
-    (savings_ratio >= min_savings_ratio).then_some(output)
+    (savings_ratio >= min_savings_ratio).then_some(JsonCompaction {
+        output,
+        deferred_stashes,
+    })
 }
 
-fn render_table(items: &[Value], flatten_nested: bool) -> Option<String> {
+fn render_table(
+    items: &[Value],
+    flatten_nested: bool,
+    offload_opaque: bool,
+    deferred_stashes: &mut Vec<DeferredStash>,
+) -> Option<String> {
     let columns = build_columns(items, flatten_nested);
     if columns.is_empty() {
         return None;
@@ -84,7 +101,7 @@ fn render_table(items: &[Value], flatten_nested: bool) -> Option<String> {
                         .as_ref()
                         .map_or(Some(value), |child| value.as_object()?.get(child))
                 });
-                format_cell(value)
+                format_cell(value, offload_opaque, deferred_stashes)
             })
             .collect::<Vec<_>>();
         output.push_str(&cells.join(","));
@@ -94,7 +111,11 @@ fn render_table(items: &[Value], flatten_nested: bool) -> Option<String> {
     Some(output)
 }
 
-fn render_buckets(items: &[Value]) -> Option<String> {
+fn render_buckets(
+    items: &[Value],
+    offload_opaque: bool,
+    deferred_stashes: &mut Vec<DeferredStash>,
+) -> Option<String> {
     let frequencies = key_frequencies(items);
     let core_threshold = (items.len() as f64 * CORE_FIELD_FRACTION).ceil() as usize;
     let core_count = frequencies
@@ -125,7 +146,12 @@ fn render_buckets(items: &[Value]) -> Option<String> {
         if group.len() < 2 {
             output.push_str(&render_raw_value_table(&group)?);
         } else {
-            output.push_str(&render_table(&group, true)?);
+            output.push_str(&render_table(
+                &group,
+                true,
+                offload_opaque,
+                deferred_stashes,
+            )?);
         }
     }
     Some(output)
@@ -319,13 +345,97 @@ fn type_tag(value: &Value) -> &'static str {
     }
 }
 
-fn format_cell(value: Option<&Value>) -> String {
+fn format_cell(
+    value: Option<&Value>,
+    offload_opaque: bool,
+    deferred_stashes: &mut Vec<DeferredStash>,
+) -> String {
     match value {
         None | Some(Value::Null) => String::new(),
         Some(Value::Bool(value)) => value.to_string(),
         Some(Value::Number(value)) => value.to_string(),
-        Some(Value::String(value)) => csv_quote_if_needed(value),
+        Some(Value::String(value)) => {
+            if offload_opaque {
+                if let Some(kind) = classify_opaque_string(value) {
+                    let key = crate::stash::compute_key(value);
+                    deferred_stashes.push(DeferredStash {
+                        key: key.clone(),
+                        content: value.clone(),
+                    });
+                    return format!(
+                        "{}[{kind},{}]",
+                        crate::stash::marker_for(&key),
+                        humanize_bytes(value.len())
+                    );
+                }
+            }
+            csv_quote_if_needed(value)
+        }
         Some(value) => csv_quote(&serde_json::to_string(value).unwrap_or_default()),
+    }
+}
+
+fn classify_opaque_string(value: &str) -> Option<&'static str> {
+    if value.len() <= 256 || value.contains("<<stash:") {
+        return None;
+    }
+    let trimmed = value.trim_start();
+    if matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'['))
+        && serde_json::from_str::<Value>(value)
+            .is_ok_and(|parsed| matches!(parsed, Value::Object(_) | Value::Array(_)))
+    {
+        return None;
+    }
+    if looks_like_base64(value) {
+        Some("base64")
+    } else if looks_like_html(value) {
+        Some("html")
+    } else {
+        Some("string")
+    }
+}
+
+fn looks_like_base64(value: &str) -> bool {
+    if value.len() < 64 || value.contains(['<', '>']) || value.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let alphabet = value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '_' | '-'))
+        .count();
+    if alphabet as f64 / (value.len() as f64) < 0.95 {
+        return false;
+    }
+    value
+        .chars()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        >= 16
+}
+
+fn looks_like_html(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| {
+            **byte == b'<'
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|next| next.is_ascii_alphabetic() || matches!(*next, b'/' | b'!'))
+        })
+        .take(3)
+        .count()
+        >= 3
+}
+
+fn humanize_bytes(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes}B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
 
@@ -352,7 +462,9 @@ mod tests {
         let items = (0..20)
             .map(|index| json!({"id": index, "meta": {"region": "us", "tier": "gold"}}))
             .collect::<Vec<_>>();
-        let output = try_compact_csv_schema(&items, 5, 0.15, false).unwrap();
+        let output = try_compact_csv_schema(&items, 5, 0.15, false, false)
+            .unwrap()
+            .output;
         assert!(output.starts_with("[20]{id:int,meta.region:string,meta.tier:string}\n"));
     }
 
@@ -378,7 +490,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let output = try_compact_csv_schema(&items, 5, 0.15, false).unwrap();
+        let output = try_compact_csv_schema(&items, 5, 0.15, false, false)
+            .unwrap()
+            .output;
 
         assert!(output.starts_with("__buckets:type\n"), "got: {output}");
         assert!(output.contains("__key:order\n[20]{"));
@@ -400,7 +514,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let output = try_compact_csv_schema(&items, 5, 0.0, false).unwrap();
+        let output = try_compact_csv_schema(&items, 5, 0.0, false, false)
+            .unwrap()
+            .output;
 
         assert!(output.starts_with("__buckets:phase\n"), "got: {output}");
         assert!(!output.starts_with("__buckets:record_id\n"));
@@ -418,7 +534,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let output = try_compact_csv_schema(&items, 5, 0.0, false).unwrap();
+        let output = try_compact_csv_schema(&items, 5, 0.0, false, false)
+            .unwrap()
+            .output;
 
         assert!(output.starts_with("[40]{id:int,status:string,type:string}\n"));
     }
@@ -433,7 +551,7 @@ mod tests {
             json!({"type": "single", "id": 5, "exception_detail": "only once"}),
         ];
 
-        let output = render_buckets(&items).unwrap();
+        let output = render_buckets(&items, false, &mut Vec::new()).unwrap();
 
         assert!(output.contains("__key:single\n[1]{value:json}\n"));
         assert!(
@@ -441,5 +559,24 @@ mod tests {
                 .contains(r#""{""type"":""single"",""id"":5,""exception_detail"":""only once""}""#),
             "got: {output}"
         );
+    }
+
+    #[test]
+    fn opaque_classifier_matches_reference_priority_and_kinds() {
+        let base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".repeat(5);
+        let html = format!("<html><body><p>{}</p></body></html>", "content ".repeat(40));
+        let plain = "diagnostic paragraph with ordinary words ".repeat(10);
+        let stringified = serde_json::to_string(
+            &(0..30)
+                .map(|index| json!({"id": index, "status": "ready"}))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        assert_eq!(classify_opaque_string(&base64), Some("base64"));
+        assert_eq!(classify_opaque_string(&html), Some("html"));
+        assert_eq!(classify_opaque_string(&plain), Some("string"));
+        assert_eq!(classify_opaque_string(&stringified), None);
+        assert_eq!(classify_opaque_string("short"), None);
     }
 }

@@ -53,6 +53,14 @@ pub struct OmissionRange {
     pub line_count: usize,
 }
 
+/// 压缩正文内嵌 marker 对应的附加 stash 写入；调用方必须先持久化这些内容，
+/// 才能发布压缩结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredStash {
+    pub key: String,
+    pub content: String,
+}
+
 /// 有损压缩结果。可证明逐行映射的压缩器填充 `omissions`；JSON 结构重写等
 /// 尚无精确坐标的路径不填写，不能将对象数、句子数冒充省略行数。
 #[derive(Debug, Clone)]
@@ -60,6 +68,7 @@ pub struct OffloadOutput {
     pub compressed: String,
     pub original: String,
     pub omissions: Vec<OmissionRange>,
+    pub deferred_stashes: Vec<DeferredStash>,
 }
 
 impl OffloadOutput {
@@ -68,6 +77,7 @@ impl OffloadOutput {
             compressed,
             original,
             omissions: Vec::new(),
+            deferred_stashes: Vec::new(),
         }
     }
 }

@@ -714,6 +714,7 @@ impl OffloadTransform for CodeAwareCompressor {
             compressed: result.compressed,
             original: input.to_string(),
             omissions: result.omissions,
+            deferred_stashes: Vec::new(),
         })
     }
 }

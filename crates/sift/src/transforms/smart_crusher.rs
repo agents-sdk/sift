@@ -16,8 +16,8 @@
 //! - 被丢弃的行在输出尾部的 `_crushed` 哨兵对象中标注（计数 + 采样）。
 //!
 //! 相对参考实现的简化：
-//! - CSV-schema 已覆盖规则/稀疏对象数组、异构 buckets 与统一嵌套字段，但尚无
-//!   opaque cell 独立卸载、observer / constraint trait 对象；
+//! - CSV-schema 已覆盖规则/稀疏对象数组、异构 buckets、统一嵌套字段与 opaque
+//!   cell 独立卸载，但尚无 observer / constraint trait 对象；
 //! - 自适应 K 用简单的 `clamp(n/4, 3, max_items)` 代替 Kneedle 算法；
 //! - 内容哈希用 blake3（允许依赖）代替 md5；
 //! - 查询锚点提取用无 regex 的手写扫描器（UUID / 4 位以上数字 / 邮箱 /
@@ -1639,6 +1639,16 @@ impl SmartCrusher {
         content: &str,
         query: Option<&str>,
     ) -> Result<(String, bool), TransformError> {
+        let (compressed, modified, _) = self.crush_internal(content, query, false)?;
+        Ok((compressed, modified))
+    }
+
+    fn crush_internal(
+        &self,
+        content: &str,
+        query: Option<&str>,
+        offload_opaque: bool,
+    ) -> Result<(String, bool, Vec<crate::transforms::DeferredStash>), TransformError> {
         let payload =
             crate::content::parse_json_payload(content).ok_or(TransformError::InvalidInput)?;
         if let Value::Array(items) = &payload.value {
@@ -1647,15 +1657,16 @@ impl SmartCrusher {
                 self.config.min_items_to_analyze,
                 self.config.lossless_min_savings_ratio,
                 false,
+                offload_opaque,
             ) {
-                return Ok((compacted, true));
+                return Ok((compacted.output, true, compacted.deferred_stashes));
             }
         }
         let (processed, _info) = process_value(&payload.value, 0, query, &self.config);
         let compact = serde_json::to_string(&processed)
             .map_err(|e| TransformError::Internal(e.to_string()))?;
         let was_modified = payload.normalized || compact != content[payload.start..payload.end];
-        Ok((compact, was_modified))
+        Ok((compact, was_modified, Vec::new()))
     }
 }
 
@@ -1695,7 +1706,8 @@ impl OffloadTransform for SmartCrusher {
     ) -> Result<OffloadOutput, TransformError> {
         let payload =
             crate::content::parse_json_payload(input).ok_or(TransformError::InvalidInput)?;
-        let (compact, was_modified) = self.crush(input, ctx.query.as_deref())?;
+        let (compact, was_modified, deferred_stashes) =
+            self.crush_internal(input, ctx.query.as_deref(), true)?;
         if !was_modified {
             // 无压缩空间（太小 / 不可压 / 输出等价）：交给上层走原样。
             return Err(TransformError::Skipped);
@@ -1711,7 +1723,9 @@ impl OffloadTransform for SmartCrusher {
             output.push_str(&input[payload.end..]);
             output
         };
-        Ok(OffloadOutput::new(compressed, input.to_string()))
+        let mut output = OffloadOutput::new(compressed, input.to_string());
+        output.deferred_stashes = deferred_stashes;
+        Ok(output)
     }
 }
 
@@ -1903,6 +1917,27 @@ mod tests {
         );
         assert!(!compressed.contains("_crushed"));
         assert!(compressed.contains("49,service-49,healthy"));
+    }
+
+    #[test]
+    fn opaque_cells_are_deferred_only_for_offload_apply() {
+        let detail = "diagnostic paragraph with repeated low entropy words ".repeat(20);
+        let items = (0..40)
+            .map(|index| json!({"id": index, "status": "ready", "detail": detail}))
+            .collect::<Vec<_>>();
+        let input = serde_json::to_string(&items).unwrap();
+        let key = crate::stash::compute_key(&detail);
+
+        let (direct, _) = crusher().crush(&input, None).unwrap();
+        assert!(!direct.contains("<<stash:"));
+
+        let offload = crusher().apply(&input, &ctx(None)).unwrap();
+        assert!(offload.compressed.contains(&crate::stash::marker_for(&key)));
+        assert_eq!(offload.deferred_stashes.len(), 40);
+        assert!(offload
+            .deferred_stashes
+            .iter()
+            .all(|entry| entry.key == key && entry.content == detail));
     }
 
     #[test]

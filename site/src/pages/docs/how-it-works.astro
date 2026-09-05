@@ -34,7 +34,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <h2>压缩器类型</h2>
     <table>
       <tr><th>内容类型</th><th>压缩器</th><th>策略</th><th>无损?</th></tr>
-      <tr><td>json_array</td><td>JsonReformatter + SmartCrusher</td><td>同构记录先转 CSV-schema;有清晰分类字段的异构记录按 schema buckets 分组,两者都保留全部行;其余结构再递归采样</td><td>优先无损,否则有损可恢复</td></tr>
+      <tr><td>json_array</td><td>JsonReformatter + SmartCrusher</td><td>同构记录转 CSV-schema,异构记录可按 schema buckets 分组;两者保留全部行,且 &gt;256 B opaque 单元格可独立 stash;其余结构再采样</td><td>优先无损,否则有损可恢复</td></tr>
       <tr><td>build_output</td><td>LogCompressor</td><td>错误 / 堆栈 / 摘要行保留,重复 warning 模板折叠</td><td>有损(可恢复)</td></tr>
       <tr><td>search_results</td><td>SearchCompressor</td><td>grep / ripgrep 输出抽稀,保留匹配上下文</td><td>有损(可恢复)</td></tr>
       <tr><td>git_diff</td><td>DiffNoise + DiffCompressor</td><td>lockfile / 纯空白变化摘要,unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
@@ -89,6 +89,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
     <ul>
       <li><strong>纯逻辑核心</strong>:压缩逻辑只进 <code>sift</code>,node 桥零逻辑 —— 核心可复用(wasm、CLI 皆可接)。</li>
       <li><strong>无损优先短路</strong>:能无损解决就不引入信息损失;同构 CSV-schema 至少节省 15% 即采用。异构数组可按 2–8 个分类值输出 <code>__buckets:字段</code>,完整原文同步进入 stash;其他重排沿用 20% 门槛。</li>
+      <li><strong>单元格独立卸载</strong>:JSON schema 中超过 256 B 的长字符串、HTML 或 base64 可替换为 <code>&lt;&lt;stash:HASH&gt;&gt;[类型,大小]</code>;发布前逐项确认写入,任一失败则整次回退。末尾 marker 仍对应完整输入。</li>
       <li><strong>token 校验兜底</strong>:有损结果要过 token 估算校验,不达预期自动回退原 block。</li>
       <li><strong>缓存成本感知</strong>:policy 含缓存成本乘数,压缩决策考虑 prompt cache 经济学。</li>
     </ul>

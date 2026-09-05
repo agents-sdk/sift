@@ -1424,6 +1424,7 @@ impl OffloadTransform for LogCompressor {
             compressed: result.compressed,
             original: input.to_string(),
             omissions: result.omissions,
+            deferred_stashes: Vec::new(),
         })
     }
 }

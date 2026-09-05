@@ -81,6 +81,21 @@ assert.ok(bucketResult.text.includes('__key:user\n[40]{'));
 assert.ok(bucketResult.stashKey);
 assert.strictEqual(retrieve(bucketResult.stashKey!), heterogeneousJson);
 
+// 长 opaque 单元格使用独立 stash marker；同值重复时 key 稳定，整块仍可恢复。
+const opaqueDetail = 'diagnostic paragraph with repeated low entropy words '.repeat(20);
+const opaqueJson = JSON.stringify(Array.from({ length: 40 }, (_, i) => ({
+  id: i,
+  status: 'ready',
+  detail: opaqueDetail,
+})));
+const opaqueResult = siftText(opaqueJson);
+assert.strictEqual(opaqueResult.lossy, true);
+const cellMarker = opaqueResult.text.match(/<<stash:([0-9a-f]{24})>>\[string,[^\]]+\]/);
+assert.ok(cellMarker, opaqueResult.text);
+assert.strictEqual(retrieve(cellMarker![1]), opaqueDetail);
+assert.ok(opaqueResult.stashKey);
+assert.strictEqual(retrieve(opaqueResult.stashKey!), opaqueJson);
+
 // 长纪要按相关性抽取；有损结果必须能从 stash 逐字恢复。
 const oldMeeting = fs.readFileSync(
   path.resolve(__dirname, '../../../crates/sift/tests/fixtures/plain_text_meeting.txt'),

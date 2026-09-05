@@ -184,7 +184,7 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 
 | 内容 | 示例 | 压缩器 |
 |---|---|---|
-| JSON 数组 | `ls`/API 返回的对象列表、数据库查询结果 | 同构记录先做无损 CSV-schema；有清晰分类字段的异构记录按可恢复 schema buckets 分组，两者都保留全部行；其余结构再采样 |
+| JSON 数组 | `ls`/API 返回的对象列表、数据库查询结果 | 同构记录转为 CSV-schema，异构记录可按 schema buckets 分组；两者保留全部行，>256 B opaque 单元格独立 stash；其余结构再采样 |
 | 构建/测试日志 | `pytest`/`npm`/`cargo`/`jest` 输出 | log_compressor（错误/堆栈/摘要保留） |
 | grep/ripgrep 结果 | 代码搜索结果 | search_compressor（按文件/分数抽稀） |
 | git diff | `git diff` / PR diff | diff_compressor（hunk 采样） |
@@ -192,7 +192,7 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 | YAML/TOML/INI | 部署清单、项目配置、服务配置 | config_compressor（保留全部键值，只卸载安全注释和空行） |
 | CSV/TSV/Markdown 表格 | 查询结果、指标列表、清单 | tabular_compressor（严格解析列后桥接 CSV-schema；采用时保留全部记录） |
 
-CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行。异构数组可用 `__buckets:type` 按类别分别声明 schema，避免联合表中大量空列，同时不丢记录。
+CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行。异构数组可用 `__buckets:type` 分别声明 schema。长 opaque 字符串、HTML 与 base64 单元格会变成 `<<stash:HASH>>[html,2.1KB]` 一类标记，可直接取回单元格；末尾标记仍可取回完整输入。
 
 适合的接入位置：
 

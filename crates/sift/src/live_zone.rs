@@ -113,11 +113,12 @@ pub fn compress_live_zone(
                     new_text,
                     stash_key,
                     tokens_saved,
+                    deferred_stashes_stored,
                 } => {
                     // 先确认原文已持久化，再发布 marker。写入失败必须原样回退，
                     // 否则会产生无法恢复的有损结果。
                     if store.put(&stash_key, text).is_ok() {
-                        outcome.stash_stored += 1;
+                        outcome.stash_stored += 1 + deferred_stashes_stored;
                         outcome.tokens_saved += tokens_saved as i64;
                         holder[text_field] = Value::String(new_text);
                         outcome.blocks_compressed += 1;
@@ -143,6 +144,8 @@ pub(crate) enum BlockOutcome {
         new_text: String,
         stash_key: String,
         tokens_saved: usize,
+        /// 正文内嵌 marker 已成功写入的去重 stash 数；整块原文由调用方另写。
+        deferred_stashes_stored: usize,
     },
     /// 压缩后 token 不减，回退原样。
     Reverted,
@@ -350,6 +353,7 @@ pub(crate) fn process_block_text(
                 new_text: final_text,
                 stash_key: key,
                 tokens_saved: original_tokens.saturating_sub(final_tokens),
+                deferred_stashes_stored: 0,
             };
         }
     }
@@ -383,9 +387,30 @@ pub(crate) fn process_block_text(
         };
     }
 
-    // 对齐 Headroom 的 entropy mask：允许压缩不含凭据的其余内容，但每个高熵
-    // 候选都必须逐次留在可见输出中；否则拒绝整次有损结果。
-    if !crate::secrets::preserves_secret_tokens(text, &compressed, source_secret_mode) {
+    // 对齐 Headroom 的 entropy mask：每个高熵候选必须逐次留在可见输出，或由
+    // 已验证的内嵌 stash marker 恢复；否则拒绝整次有损结果。
+    // 标签保护会改变单元格原文字节；在没有精确反向映射到独立 stash 内容前，
+    // 禁止发布由保护视图生成的内嵌 marker。
+    if protected_text != text && !offload.deferred_stashes.is_empty() {
+        return match (reformatted, commit_lossless(&current)) {
+            (true, Some(outcome)) => outcome,
+            (..) => BlockOutcome::Reverted,
+        };
+    }
+
+    // 高熵候选既可以直接留在输出，也可以由输出中的有效 marker 指向已排队的
+    // stash 内容。把每个 marker 对应的原文追加到校验视图，仍按出现次数核对。
+    let mut secret_validation_view = compressed.clone();
+    for deferred in &offload.deferred_stashes {
+        if deferred.key != crate::stash::compute_key(&deferred.content)
+            || !compressed.contains(&crate::stash::marker_for(&deferred.key))
+        {
+            return BlockOutcome::Reverted;
+        }
+        secret_validation_view.push('\n');
+        secret_validation_view.push_str(&deferred.content);
+    }
+    if !crate::secrets::preserves_secret_tokens(text, &secret_validation_view, source_secret_mode) {
         return match (reformatted, commit_lossless(&current)) {
             (true, Some(outcome)) => outcome,
             (..) => BlockOutcome::Reverted,
@@ -403,10 +428,22 @@ pub(crate) fn process_block_text(
             (..) => BlockOutcome::Reverted,
         };
     }
+    let mut stored = std::collections::BTreeSet::new();
+    for deferred in &offload.deferred_stashes {
+        if stored.insert(deferred.key.as_str())
+            && store.put(&deferred.key, &deferred.content).is_err()
+        {
+            return match (reformatted, commit_lossless(&current)) {
+                (true, Some(outcome)) => outcome,
+                (..) => BlockOutcome::Reverted,
+            };
+        }
+    }
     BlockOutcome::Lossy {
         new_text: final_text,
         stash_key: key,
         tokens_saved: original_tokens.saturating_sub(final_tokens),
+        deferred_stashes_stored: stored.len(),
     }
 }
 
@@ -563,6 +600,45 @@ mod tests {
         let marker_start = output.rfind("<<stash:").unwrap();
         let key = &output[marker_start + "<<stash:".len()..output.len() - 2];
         assert_eq!(store.get(key).as_deref(), Some(raw.as_str()));
+    }
+
+    #[test]
+    fn opaque_json_cells_count_deferred_and_outer_stashes() {
+        let detail = "diagnostic paragraph with repeated low entropy words ".repeat(20);
+        let rows = (0..40)
+            .map(|index| json!({"id": index, "status": "ready", "detail": detail}))
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let mut body = json!({"messages": [{"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": raw}
+        ]}]});
+        let store = InMemoryStashStore::new();
+
+        let outcome = compress_live_zone(&mut body, Some(&store), None);
+
+        assert!(outcome.changed);
+        assert_eq!(outcome.stash_stored, 2);
+        assert_eq!(store.len(), 2);
+        let output = body["messages"][0]["content"][0]["content"]
+            .as_str()
+            .unwrap();
+        assert!(output.contains(&marker_for(&crate::stash::compute_key(&detail))));
+    }
+
+    #[test]
+    fn opaque_json_cell_write_failure_reverts_before_marker_is_published() {
+        let detail = "diagnostic paragraph with repeated low entropy words ".repeat(20);
+        let rows = (0..40)
+            .map(|index| json!({"id": index, "status": "ready", "detail": detail}))
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let ctx = CompressionContext::default();
+        let protector = TagProtector::new(TagProtectorConfig::default());
+        let tokenizer = EstimatingCounter::new();
+
+        let outcome = process_block_text(&raw, &FailingStore, &ctx, &protector, &tokenizer);
+
+        assert!(matches!(outcome, BlockOutcome::Reverted));
     }
 
     #[test]

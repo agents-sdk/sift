@@ -87,6 +87,7 @@ impl ConfigCompressor {
             compressed,
             original: input.to_string(),
             omissions,
+            deferred_stashes: Vec::new(),
         })
     }
 }

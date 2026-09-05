@@ -57,13 +57,14 @@ impl ReformatTransform for JsonReformatter {
                 JSON_SCHEMA_MIN_ITEMS,
                 self.min_savings_ratio,
                 true,
+                false,
             ) {
                 if payload.start == 0 && payload.end == input.len() {
-                    return Ok(compacted);
+                    return Ok(compacted.output);
                 }
                 let mut output = String::with_capacity(input.len());
                 output.push_str(&input[..payload.start]);
-                output.push_str(&compacted);
+                output.push_str(&compacted.output);
                 output.push_str(&input[payload.end..]);
                 return Ok(output);
             }

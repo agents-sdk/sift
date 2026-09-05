@@ -83,6 +83,7 @@ pub fn compress_text_with_source_path(
             new_text,
             stash_key,
             tokens_saved,
+            ..
         } => {
             // 单字符串入口没有外层循环代写 store，由本函数自己卸载原文。
             if store.put(&stash_key, text).is_err() {
@@ -186,6 +187,51 @@ mod tests {
         assert_eq!(result.text.matches("<<stash:").count(), 1);
         let key = result.stash_key.as_deref().unwrap();
         assert_eq!(store.get(key).as_deref(), Some(raw.as_str()));
+    }
+
+    #[test]
+    fn long_json_cells_are_independently_stashed_before_output_is_published() {
+        let detail = "diagnostic paragraph with repeated low entropy words ".repeat(20);
+        let rows = (0..40)
+            .map(|index| json!({"id": index, "status": "ready", "detail": detail}))
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(&raw, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(result.lossy);
+        let detail_key = crate::stash::compute_key(&detail);
+        assert!(result.text.contains(&crate::stash::marker_for(&detail_key)));
+        assert_eq!(store.get(&detail_key).as_deref(), Some(detail.as_str()));
+        let original_key = result.stash_key.as_deref().unwrap();
+        assert_eq!(store.get(original_key).as_deref(), Some(raw.as_str()));
+        assert_eq!(store.len(), 2, "重复单元格应按内容 key 去重存储");
+    }
+
+    #[test]
+    fn high_entropy_base64_cell_is_recoverable_instead_of_failing_secret_check() {
+        let blob = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".repeat(5);
+        let rows = (0..40)
+            .map(|index| json!({"id": index, "blob": blob}))
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(&raw, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(result.lossy);
+        let blob_key = crate::stash::compute_key(&blob);
+        assert!(result
+            .text
+            .contains(&format!("{}[base64,", crate::stash::marker_for(&blob_key))));
+        assert_eq!(store.get(&blob_key).as_deref(), Some(blob.as_str()));
+        assert_eq!(
+            store.get(result.stash_key.as_deref().unwrap()).as_deref(),
+            Some(raw.as_str())
+        );
     }
 
     #[test]
