@@ -89,7 +89,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 | Input | What remains visible |
 | --- | --- |
-| JSON objects and arrays | Uniform records become CSV-schema; heterogeneous records can split into schema buckets. Both retain every row, while opaque cells over 256 bytes move to their own recoverable stash markers; remaining shapes use recursive sampling |
+| JSON objects and arrays | Uniform records become CSV-schema; heterogeneous records can split into schema buckets. Nested and stringified JSON arrays compact recursively, while opaque cells over 256 bytes move to recoverable stash markers; adopted schema output retains every row |
 | Build/test logs | Commands, errors, stack traces, summaries |
 | grep/ripgrep output | High-value matches grouped with source context |
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
@@ -101,7 +101,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 
 Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
 
-CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category. Long opaque string, HTML, and base64 cells become markers such as `<<stash:HASH>>[html,2.1KB]`; each marker retrieves that cell directly, while the trailing marker still retrieves the complete original input.
+CSV-schema writes the row count and typed columns once—such as `[200]{id:int,status:string}`—then emits ordinary CSV rows. Heterogeneous arrays can use `__buckets:type` with one schema per category. Nested object arrays and JSON encoded inside strings recursively become compact table objects instead of carrying repeated keys and escaping. Long opaque string, HTML, and base64 cells become recoverable stash markers.
 
 ## Recovery
 

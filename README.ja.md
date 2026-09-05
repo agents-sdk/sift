@@ -164,7 +164,7 @@ if (result.stashKey) {
 
 | 入力 | sift が保持・簡略化する内容 |
 | --- | --- |
-| JSON 配列 | 均一なレコードは CSV-schema に変換し、異種レコードは schema buckets に分割可能。どちらも全行を保持し、256 B を超える opaque セルは個別に復元可能な stash へ移動。残りの構造だけを再帰的にサンプリング |
+| JSON 配列 | 均一なレコードは CSV-schema、異種レコードは schema buckets に変換可能。ネスト配列と文字列化 JSON は再帰的に圧縮し、256 B 超の opaque セルは個別 stash へ移動。採用した schema 出力は全行を保持 |
 | ビルド・テストログ | コマンド、エラー、スタックトレース、要約 |
 | grep / ripgrep 結果 | ソースの文脈とともに整理された有用な一致 |
 | Unified diff | 代表的な hunk と変更構造 |

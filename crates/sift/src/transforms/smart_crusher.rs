@@ -16,8 +16,9 @@
 //! - 被丢弃的行在输出尾部的 `_crushed` 哨兵对象中标注（计数 + 采样）。
 //!
 //! 相对参考实现的简化：
-//! - CSV-schema 已覆盖规则/稀疏对象数组、异构 buckets、统一嵌套字段与 opaque
-//!   cell 独立卸载，但尚无 observer / constraint trait 对象；
+//! - CSV-schema 已覆盖规则/稀疏对象数组、异构 buckets、统一嵌套字段、嵌套数组/
+//!   字符串化 JSON 递归与 opaque cell 独立卸载，但尚无 observer / constraint
+//!   trait 对象；
 //! - 自适应 K 用简单的 `clamp(n/4, 3, max_items)` 代替 Kneedle 算法；
 //! - 内容哈希用 blake3（允许依赖）代替 md5；
 //! - 查询锚点提取用无 regex 的手写扫描器（UUID / 4 位以上数字 / 邮箱 /

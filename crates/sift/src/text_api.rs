@@ -235,6 +235,41 @@ mod tests {
     }
 
     #[test]
+    fn stringified_json_array_cells_are_recursively_compacted() {
+        let rows = (0..40)
+            .map(|batch| {
+                let payload = (0..12)
+                    .map(|index| json!({"x": batch * 100 + index, "state": "ready"}))
+                    .collect::<Vec<_>>();
+                json!({
+                    "batch_id": batch,
+                    "event": "batch",
+                    "payload": serde_json::to_string(&payload).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let raw = serde_json::to_string(&rows).unwrap();
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(&raw, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(!result.lossy);
+        assert!(result.stash_key.is_none());
+        assert!(
+            result
+                .text
+                .starts_with("[40]{batch_id:int,event:string,payload:string}\n"),
+            "{}",
+            result.text
+        );
+        assert!(result.text.contains(r#"_compaction"":""table"#));
+        assert!(result.text.contains(r#"_total"":12"#));
+        assert!(result.text.contains("3911"));
+        assert!(store.is_empty());
+    }
+
+    #[test]
     fn search_results_lossy_has_single_marker() {
         // 回归：search_compressor 的折叠标记曾内嵌 `<<stash:KEY>>`，框架又在末尾
         // 追加一次，导致输出出现两个标记。这里断言有损输出只有一个取回标记。

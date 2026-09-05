@@ -164,7 +164,7 @@ if (result.stashKey) {
 
 | 输入 | sift 保留或简化的内容 |
 | --- | --- |
-| JSON 数组 | 同构记录转为 CSV-schema，异构记录可按类别输出 schema buckets；两者都保留全部记录，超过 256 B 的 opaque 单元格独立进入可恢复 stash；其余结构再递归采样 |
+| JSON 数组 | 同构记录转为 CSV-schema，异构记录可按类别分桶；嵌套数组和字符串化 JSON 递归紧凑化，超过 256 B 的 opaque 单元格独立 stash；采用 schema 时保留全部记录 |
 | 构建与测试日志 | 命令、错误、堆栈和摘要 |
 | grep / ripgrep 结果 | 按源码上下文组织的高价值匹配 |
 | Unified diff | 代表性 hunk 与改动结构 |
@@ -174,7 +174,7 @@ if (result.stashKey) {
 | CSV、TSV、Markdown 表格 | 严格解析列结构后桥接 CSV-schema；采用压缩结果时保留全部记录，已足够紧凑的输入可原样透传 |
 | Pretty JSON 与重复日志 | 优先尝试无损 minify 或模板化 |
 
-CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行。异构数组可用 `__buckets:type` 按类别分别声明 schema。长 opaque 字符串、HTML 与 base64 单元格会变成 `<<stash:HASH>>[html,2.1KB]` 一类标记；该标记直接取回单元格，末尾标记仍可取回完整输入。
+CSV-schema 会先声明一次行数和字段类型，例如 `[200]{id:int,status:string}`，随后输出普通 CSV 行。异构数组可用 `__buckets:type` 按类别分别声明 schema；对象数组单元格以及字符串中编码的 JSON 数组会递归变成紧凑 table 对象，去掉内层重复字段名和转义。长 opaque 字符串、HTML 与 base64 单元格会变成 `<<stash:HASH>>[html,2.1KB]` 一类标记。
 
 HTML 会提取文章正文并转换为可读 Markdown，移除脚本、样式、导航、侧栏、广告和页脚；完整原文仍可从 stash 恢复。
 

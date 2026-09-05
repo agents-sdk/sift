@@ -1,7 +1,8 @@
 //! 规则 JSON 对象数组的 CSV-schema 紧凑化。
 //!
-//! 所有行都保留，只把每行重复的字段名提升为一次 schema 声明。仅当相对紧凑
-//! JSON 至少节省配置比例时采用；否则交回 SmartCrusher 的有损抽样路径。
+//! 所有行都保留，只把每行重复的字段名提升为一次 schema 声明；对象数组单元格
+//! 与字符串化 JSON 容器可递归紧凑化。仅当相对紧凑 JSON 至少节省配置比例时
+//! 采用；否则交回 SmartCrusher 的有损抽样路径。
 
 use std::collections::BTreeMap;
 
@@ -355,35 +356,153 @@ fn format_cell(
         Some(Value::Bool(value)) => value.to_string(),
         Some(Value::Number(value)) => value.to_string(),
         Some(Value::String(value)) => {
+            if let Some(parsed) = parse_json_container(value) {
+                let nested = match &parsed {
+                    Value::Array(items) => {
+                        nested_table_json(items, offload_opaque, deferred_stashes, 0)
+                            .unwrap_or(parsed)
+                    }
+                    _ => parsed,
+                };
+                return csv_quote(
+                    &serde_json::to_string(&nested).unwrap_or_else(|_| value.clone()),
+                );
+            }
             if offload_opaque {
                 if let Some(kind) = classify_opaque_string(value) {
-                    let key = crate::stash::compute_key(value);
-                    deferred_stashes.push(DeferredStash {
-                        key: key.clone(),
-                        content: value.clone(),
-                    });
-                    return format!(
-                        "{}[{kind},{}]",
-                        crate::stash::marker_for(&key),
-                        humanize_bytes(value.len())
-                    );
+                    return defer_opaque(value, kind, deferred_stashes);
                 }
             }
             csv_quote_if_needed(value)
         }
+        Some(Value::Array(items)) => nested_table_json(items, offload_opaque, deferred_stashes, 0)
+            .and_then(|nested| serde_json::to_string(&nested).ok())
+            .map_or_else(
+                || csv_quote(&serde_json::to_string(items).unwrap_or_default()),
+                |nested| csv_quote(&nested),
+            ),
         Some(value) => csv_quote(&serde_json::to_string(value).unwrap_or_default()),
     }
+}
+
+fn nested_table_json(
+    items: &[Value],
+    offload_opaque: bool,
+    deferred_stashes: &mut Vec<DeferredStash>,
+    depth: usize,
+) -> Option<Value> {
+    // 限制病态输入的递归开销；到达上限后保留该层原始 JSON。
+    if depth >= 8 || items.len() < 2 || !items.iter().all(Value::is_object) {
+        return None;
+    }
+    let columns = build_columns(items, true);
+    if columns.is_empty() {
+        return None;
+    }
+
+    let schema = columns
+        .iter()
+        .map(|column| {
+            let mut field = serde_json::Map::new();
+            field.insert("name".into(), Value::String(column.name.clone()));
+            field.insert("type".into(), Value::String(column.type_tag.into()));
+            if column.nullable {
+                field.insert("nullable".into(), Value::Bool(true));
+            }
+            Value::Object(field)
+        })
+        .collect::<Vec<_>>();
+    let rows = items
+        .iter()
+        .map(|item| {
+            let object = item.as_object()?;
+            let cells = columns
+                .iter()
+                .map(|column| {
+                    let value = object.get(&column.parent).and_then(|value| {
+                        column
+                            .child
+                            .as_ref()
+                            .map_or(Some(value), |child| value.as_object()?.get(child))
+                    });
+                    nested_cell_json(value, offload_opaque, deferred_stashes, depth + 1)
+                })
+                .collect::<Vec<_>>();
+            Some(Value::Array(cells))
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    let mut compacted = serde_json::Map::new();
+    compacted.insert("_compaction".into(), Value::String("table".into()));
+    compacted.insert("_schema".into(), Value::Array(schema));
+    compacted.insert("_kept".into(), Value::from(items.len()));
+    compacted.insert("_total".into(), Value::from(items.len()));
+    compacted.insert("_rows".into(), Value::Array(rows));
+    Some(Value::Object(compacted))
+}
+
+fn nested_cell_json(
+    value: Option<&Value>,
+    offload_opaque: bool,
+    deferred_stashes: &mut Vec<DeferredStash>,
+    depth: usize,
+) -> Value {
+    match value {
+        None | Some(Value::Null) => Value::Null,
+        Some(Value::String(value)) => {
+            if let Some(parsed) = parse_json_container(value) {
+                if let Value::Array(items) = &parsed {
+                    if let Some(nested) =
+                        nested_table_json(items, offload_opaque, deferred_stashes, depth)
+                    {
+                        return nested;
+                    }
+                }
+                return parsed;
+            }
+            if offload_opaque {
+                if let Some(kind) = classify_opaque_string(value) {
+                    return Value::String(defer_opaque(value, kind, deferred_stashes));
+                }
+            }
+            Value::String(value.clone())
+        }
+        Some(Value::Array(items)) => {
+            nested_table_json(items, offload_opaque, deferred_stashes, depth)
+                .unwrap_or_else(|| Value::Array(items.clone()))
+        }
+        Some(value) => value.clone(),
+    }
+}
+
+fn parse_json_container(value: &str) -> Option<Value> {
+    let trimmed = value.trim_start();
+    if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
+        return None;
+    }
+    serde_json::from_str::<Value>(value)
+        .ok()
+        .filter(|parsed| matches!(parsed, Value::Object(_) | Value::Array(_)))
+}
+
+fn defer_opaque(value: &str, kind: &str, deferred_stashes: &mut Vec<DeferredStash>) -> String {
+    let key = crate::stash::compute_key(value);
+    deferred_stashes.push(DeferredStash {
+        key: key.clone(),
+        content: value.to_string(),
+    });
+    format!(
+        "{}[{kind},{}]",
+        crate::stash::marker_for(&key),
+        humanize_bytes(value.len())
+    )
 }
 
 fn classify_opaque_string(value: &str) -> Option<&'static str> {
     if value.len() <= 256 || value.contains("<<stash:") {
         return None;
     }
-    let trimmed = value.trim_start();
-    if matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'['))
-        && serde_json::from_str::<Value>(value)
-            .is_ok_and(|parsed| matches!(parsed, Value::Object(_) | Value::Array(_)))
-    {
+    if parse_json_container(value).is_some() {
         return None;
     }
     if looks_like_base64(value) {
@@ -578,5 +697,50 @@ mod tests {
         assert_eq!(classify_opaque_string(&plain), Some("string"));
         assert_eq!(classify_opaque_string(&stringified), None);
         assert_eq!(classify_opaque_string("short"), None);
+    }
+
+    #[test]
+    fn actual_nested_arrays_compact_recursively_at_multiple_levels() {
+        let items = (0..10)
+            .map(|batch| {
+                json!({
+                    "batch": batch,
+                    "payload": (0..30).map(|index| json!({
+                        "measurement_sequence_number": batch * 100 + index,
+                        "detailed_observation_records": (0..12).map(|detail| json!({
+                            "observation_sequence_number": detail,
+                            "validation_succeeded": true
+                        })).collect::<Vec<_>>()
+                    })).collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let result = try_compact_csv_schema(&items, 5, 0.0, true, false).unwrap();
+
+        assert!(result.output.starts_with("[10]{batch:int,payload:json}\n"));
+        assert!(result.output.matches("_compaction").count() > 100);
+        assert!(result.output.contains("929"));
+        assert!(result.deferred_stashes.is_empty());
+    }
+
+    #[test]
+    fn stringified_object_is_unescaped_but_malformed_json_stays_literal() {
+        let items = (0..10)
+            .map(|index| {
+                json!({
+                    "id": index,
+                    "payload": format!(r#"{{"region":"us","index":{index}}}"#),
+                    "malformed": "{not valid json"
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let result = try_compact_csv_schema(&items, 5, 0.0, true, false).unwrap();
+
+        assert!(result
+            .output
+            .contains(r#""{""region"":""us"",""index"":9}""#));
+        assert!(result.output.contains("{not valid json"));
     }
 }

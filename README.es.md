@@ -164,7 +164,7 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 
 | Entrada | Qué conserva o simplifica sift |
 | --- | --- |
-| Arrays JSON | Los registros uniformes pasan a CSV-schema y los heterogéneos pueden dividirse en schema buckets. Ambos conservan todas las filas; las celdas opacas de más de 256 B pasan a un stash recuperable propio y el resto se muestrea recursivamente |
+| Arrays JSON | Los registros uniformes pasan a CSV-schema y los heterogéneos a schema buckets. Los arrays anidados y JSON serializado como texto se compactan recursivamente; las celdas opacas de más de 256 B pasan a su propio stash y el schema conserva todas las filas |
 | Logs de compilación y pruebas | Comandos, errores, trazas y resúmenes |
 | Resultados de grep / ripgrep | Coincidencias útiles agrupadas con su contexto de código |
 | Unified diffs | Hunks representativos y estructura de los cambios |

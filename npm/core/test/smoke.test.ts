@@ -96,6 +96,24 @@ assert.strictEqual(retrieve(cellMarker![1]), opaqueDetail);
 assert.ok(opaqueResult.stashKey);
 assert.strictEqual(retrieve(opaqueResult.stashKey!), opaqueJson);
 
+// 字符串化 JSON 数组递归变成内层 table，外层与内层记录全部保留且无需 stash。
+const nestedJson = JSON.stringify(Array.from({ length: 40 }, (_, batch) => ({
+  batch_id: batch,
+  event: 'batch',
+  payload: JSON.stringify(Array.from({ length: 12 }, (_, index) => ({
+    x: batch * 100 + index,
+    state: 'ready',
+  }))),
+})));
+const nestedResult = siftText(nestedJson);
+assert.strictEqual(nestedResult.changed, true);
+assert.strictEqual(nestedResult.lossy, false);
+assert.strictEqual(nestedResult.stashKey, null);
+assert.ok(nestedResult.text.startsWith('[40]{batch_id:int,event:string,payload:string}\n'));
+assert.ok(nestedResult.text.includes('_compaction"":""table'));
+assert.ok(nestedResult.text.includes('_total"":12'));
+assert.ok(nestedResult.text.includes('3911'));
+
 // 长纪要按相关性抽取；有损结果必须能从 stash 逐字恢复。
 const oldMeeting = fs.readFileSync(
   path.resolve(__dirname, '../../../crates/sift/tests/fixtures/plain_text_meeting.txt'),
