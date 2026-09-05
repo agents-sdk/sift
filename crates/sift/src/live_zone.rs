@@ -353,7 +353,7 @@ pub(crate) fn process_block_text(
     }
 
     let Some(compressor) = compressor_for(content_type) else {
-        // 无压缩器（Html 兜底）但 reformat 有收益：保留无损结果。
+        // 无压缩器但 reformat 有收益：保留无损结果。
         return match (reformatted, commit_lossless(&current)) {
             (true, Some(outcome)) => outcome,
             _ => BlockOutcome::Unchanged,

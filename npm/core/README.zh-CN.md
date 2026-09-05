@@ -6,9 +6,9 @@
 
 [English](README.md) · 简体中文 · [项目主页](../../README.zh-CN.md)
 
-### **9 个内置基准场景整体缩小 73.2%**
+### **10 个内置基准场景整体缩小 73.1%**
 
-**75,546 B → 20,257 B** · **估算节省约 16,586 tokens** · **7/7 个有损基准样例成功恢复**
+**76,582 B → 20,594 B** · **估算节省约 16,795 tokens** · **8/8 个有损基准样例成功恢复**
 
 测试口径与完整结果见 [BENCHMARK.md](../../BENCHMARK.md)。当前状态：**Alpha**，1.0 前 API 细节可能变化。
 
@@ -33,7 +33,7 @@ npm install @agent-context/sift
 ## 运行场景演示
 
 仓库内提供了覆盖 JSON 数组、pretty JSON、构建日志、搜索结果、git diff、混合命令
-输出、源代码、重复纯文本和独有内容保护的 9 个独立用例。它通过包根目录加载 `@agent-context/sift` 的公开入口，
+输出、源代码、重复纯文本、独有内容保护和 HTML 正文提取的 10 个独立用例。它通过包根目录加载 `@agent-context/sift` 的公开入口，
 每个用例都会完整打印「压缩前原文」「压缩后输出」「运行指标」，并验证 stash 恢复和
 冻结前缀保护：
 
@@ -188,6 +188,7 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 | 构建/测试日志 | `pytest`/`npm`/`cargo`/`jest` 输出 | log_compressor（错误/堆栈/摘要保留） |
 | grep/ripgrep 结果 | 代码搜索结果 | search_compressor（按文件/分数抽稀） |
 | git diff | `git diff` / PR diff | diff_compressor（hunk 采样） |
+| HTML | 网页抓取结果 | html_extractor（正文转 Markdown，移除页面噪声） |
 
 适合的接入位置：
 
@@ -198,8 +199,8 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 **不需要调用**的情况：
 
 - 消息都很小：单个文本块 < 512 字节会自动跳过（`MIN_BLOCK_BYTES`）。
-- HTML：当前没有专用压缩器；纯文本和源代码已有各自压缩器，但 `siftRequest` 仍只会
-  对工具输出候选启用它们，普通文本请显式调用 `siftText`。
+- HTML、纯文本和源代码已有各自压缩器，但 `siftRequest` 仍只会对工具输出候选启用它们；
+  普通文本请显式调用 `siftText`。
 - stash 目录不可创建或原文无法落盘：有损结果会回退原文，不会留下不可恢复的压缩内容。
 
 ## 有损压缩与恢复（stash）

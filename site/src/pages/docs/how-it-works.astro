@@ -39,7 +39,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <tr><td>git_diff</td><td>DiffNoise + DiffCompressor</td><td>lockfile / 纯空白变化摘要,unified diff hunk 采样,改动行保留</td><td>有损(可恢复)</td></tr>
       <tr><td>plain_text</td><td>TextCrusher</td><td>按 query 相关性、位置、显著信息与近重复抑制抽取代表句段</td><td>有损(可恢复)</td></tr>
       <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,保留签名及前 5 行完整语句后折叠函数体</td><td>有损(可恢复)</td></tr>
-      <tr><td>html</td><td>—</td><td>检测支持,压缩当前 no-op</td><td>—</td></tr>
+      <tr><td>html</td><td>HtmlExtractor</td><td>正文转 Markdown,移除脚本/样式/导航/侧栏/广告/页脚</td><td>有损(可恢复)</td></tr>
     </table>
 
     <h3>共用机制</h3>

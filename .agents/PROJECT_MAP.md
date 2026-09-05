@@ -34,6 +34,7 @@ crates/
         search_compressor.rs # grep/ripgrep 搜索结果抽稀
         diff_compressor.rs   # unified diff hunk 采样
         diff_noise.rs        # diff 噪声卸载（lockfile / whitespace-only）
+        html_extractor.rs    # HTML 正文转 Markdown，移除脚本/样式/导航/页脚等页面噪声
         text_crusher.rs   # 默认 BM25/时序/显著性抽取；Rust 可显式 conservative=true 切换完整块去重
         text_blocks.rs    # 保守段落/发言分块，同章节完全相同块保留首份，输出原文行坐标
         code_compressor.rs   # tree-sitter AST 代码压缩（8 语言，函数体保留前 5 行完整语句后折叠）
@@ -134,7 +135,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
                            配置和固定样本输出与 Headroom TextCrusher 对齐。
                            Rust 可显式 conservative=true 切换为同章节完整块去重）
           SourceCode    → code_compressor（tree-sitter 8 语言）
-          Html          → no-op
+          Html          → html_extractor（正文转 Markdown；完整 HTML 经 stash 恢复）
          混合内容路由（整块落 PlainText 时）：
            mixed_content::split_into_sections → 逐段独立分发压缩
            + recursive_json::replace_json_spans（段内嵌入 JSON span 平衡匹配替换）

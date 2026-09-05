@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 73.2% menos de contexto. 16,586 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 73.1% menos de contexto. 16,795 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los nueve escenarios incluidos pasan de **75,546 B a 20,257 B**, con recuperación correcta del original en **7/7 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los diez escenarios incluidos pasan de **76,582 B a 20,594 B**, con recuperación correcta del original en **8/8 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 73.2% más pequeño**, pasando de 75,546 a 20,257 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 73.1% más pequeño**, pasando de 76,582 a 20,594 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -48,7 +48,7 @@ sift ofrece:
 
 ## ¿Cuánto puede ahorrar?
 
-Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el árbol de fuentes actual (versión del paquete `0.0.1-alpha.7`). Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
+Resultados medidos con las diez [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el árbol de fuentes actual (versión del paquete `0.0.1-alpha.7`). Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
 
 | Escenario | Entrada | Salida | Reducción | Tokens ahorrados estimados | Recuperación |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -61,7 +61,8 @@ Resultados medidos con las nueve [entradas de demo](npm/core/demo/cases) determi
 | Código fuente Rust | 2,282 B | 572 B | 74.9% | 513 | PASS |
 | Texto plano repetido | 2,723 B | 454 B | 83.3% | 680 | PASS |
 | Protección de datos únicos y valores sensibles | 3,125 B | 1,540 B | 50.7% | 476 | PASS |
-| **Total** | **75,546 B** | **20,257 B** | **73.2%** | **16,586** | **7/7 casos con pérdida recuperados** |
+| Extracción del contenido HTML | 1,036 B | 337 B | 67.5% | 209 | PASS |
+| **Total** | **76,582 B** | **20,594 B** | **73.1%** | **16,795** | **8/8 casos con pérdida recuperados** |
 
 Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los valores similares a credenciales permanecen visibles mientras se comprime el resto del contenido de poco valor; todos los casos con pérdida restauran el original completo. `tokensSaved` usa el estimador integrado de sift.
 
@@ -169,7 +170,7 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 | Texto plano | Selección extractiva según query, posición y relevancia, con supresión de duplicados cercanos |
 | JSON con formato y logs repetitivos | Minificación o plantillas sin pérdida cuando es suficiente |
 
-Actualmente, HTML se devuelve sin cambios.
+HTML extrae el contenido principal como Markdown legible y elimina scripts, estilos, navegación, barras laterales, anuncios y pies de página; el original completo se puede recuperar desde stash.
 
 ## Diseñado para una adopción segura
 

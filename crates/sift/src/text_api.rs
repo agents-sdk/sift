@@ -384,4 +384,24 @@ mod tests {
         assert!(slice.text.ends_with("  return candidate_0;\n"));
         std::fs::remove_dir_all(dir).ok();
     }
+
+    #[test]
+    fn html_extracts_article_and_stashes_exact_original() {
+        let html = include_str!("../tests/fixtures/article_page.html");
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(html, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(result.lossy);
+        assert!(result
+            .text
+            .contains("# Compress HTML without losing the article"));
+        assert!(result.text.contains("Article paragraphs remain visible."));
+        assert!(!result.text.contains("analyticsToken"));
+        assert!(!result.text.contains("Buy unrelated products"));
+        assert!(!result.text.contains("Copyright 2026"));
+        let key = result.stash_key.as_deref().unwrap();
+        assert_eq!(store.get(key).as_deref(), Some(html));
+    }
 }

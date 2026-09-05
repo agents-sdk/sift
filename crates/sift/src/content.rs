@@ -27,11 +27,11 @@ pub enum ContentType {
     SearchResults,
     /// unified git diff → DiffCompressor
     GitDiff,
-    /// 源代码：当前 no-op（B4 决策）
+    /// 源代码 → CodeCompressor
     SourceCode,
-    /// 普通文本：当前 no-op
+    /// 普通文本 → TextCrusher
     PlainText,
-    /// HTML：当前 no-op
+    /// HTML → HtmlExtractor
     Html,
 }
 

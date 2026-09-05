@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Sift HTML Extraction</title>
+  <meta name="author" content="Context Team">
+  <style>
+    body { color: #222; }
+    .advertisement { display: block; }
+  </style>
+  <script>
+    window.analyticsToken = "tracking-only-noise";
+  </script>
+</head>
+<body>
+  <header>
+    <nav><a href="/">Home</a><a href="/pricing">Pricing</a></nav>
+  </header>
+  <main>
+    <article>
+      <h1>Compress HTML without losing the article</h1>
+      <p>Sift keeps the main explanation &amp; removes page chrome.</p>
+      <h2>Important details</h2>
+      <ul>
+        <li>Article paragraphs remain visible.</li>
+        <li>Lists retain their readable structure.</li>
+      </ul>
+      <pre><code>const result = siftText(html);</code></pre>
+      <p>The complete original document remains recoverable from stash.</p>
+    </article>
+  </main>
+  <aside class="advertisement">Buy unrelated products now.</aside>
+  <footer>Copyright 2026 Example Corp.</footer>
+  <script>sendTrackingBeacon();</script>
+</body>
+</html>

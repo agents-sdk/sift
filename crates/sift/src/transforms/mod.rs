@@ -4,6 +4,7 @@
 pub mod code_compressor;
 pub mod diff_compressor;
 mod diff_noise;
+pub mod html_extractor;
 mod line_omissions;
 pub mod log_compressor;
 mod log_context;
@@ -88,7 +89,7 @@ pub trait OffloadTransform: Send + Sync {
 }
 
 /// 按内容类型分发到压缩器。live_zone 的核心调度点。
-/// 返回 None 表示该类型当前是 no-op（SourceCode/Html）。
+/// 返回 None 表示该类型当前没有压缩器。
 pub fn dispatch_compressor(text: &str) -> Option<&'static str> {
     match crate::content::detect_content_type(text) {
         ContentType::JsonArray => Some("smart_crusher"),
@@ -97,12 +98,12 @@ pub fn dispatch_compressor(text: &str) -> Option<&'static str> {
         ContentType::GitDiff => Some("diff_compressor"),
         ContentType::PlainText => Some("text_crusher"),
         ContentType::SourceCode => Some("code_compressor"),
-        ContentType::Html => None,
+        ContentType::Html => Some("html_extractor"),
     }
 }
 
 /// 按内容类型构造对应的有损压缩器实例（用默认配置）。
-/// 返回 None 表示该类型无可压的压缩器（SourceCode/Html 当前 no-op）。
+/// 返回 None 表示该类型无可压的压缩器。
 pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransform>> {
     match content_type {
         ContentType::JsonArray => Some(Box::new(smart_crusher::SmartCrusher::new(
@@ -123,7 +124,9 @@ pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransf
         ContentType::SourceCode => Some(Box::new(code_compressor::CodeAwareCompressor::new(
             code_compressor::CodeCompressorConfig::default(),
         ))),
-        ContentType::Html => None,
+        ContentType::Html => Some(Box::new(html_extractor::HtmlExtractor::new(
+            html_extractor::HtmlExtractorConfig::default(),
+        ))),
     }
 }
 
@@ -151,10 +154,10 @@ mod tests {
     fn dispatch_routes_by_type() {
         assert_eq!(dispatch_compressor("[1,2,3]"), Some("smart_crusher"));
         assert_eq!(dispatch_compressor("just text"), Some("text_crusher"));
-        // 完整 HTML（带 doctype）才达到 Html 检测阈值 → no-op
+        // 完整 HTML（带 doctype）进入正文提取。
         assert_eq!(
             dispatch_compressor("<!doctype html><html><head></head><body><p>hi</p></body></html>"),
-            None
+            Some("html_extractor")
         );
     }
 
@@ -166,7 +169,7 @@ mod tests {
         assert!(compressor_for(ContentType::GitDiff).is_some());
         assert!(compressor_for(ContentType::PlainText).is_some());
         assert!(compressor_for(ContentType::SourceCode).is_some());
-        assert!(compressor_for(ContentType::Html).is_none());
+        assert!(compressor_for(ContentType::Html).is_some());
     }
 
     #[test]

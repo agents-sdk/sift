@@ -6,9 +6,9 @@
 
 English · [简体中文](README.zh-CN.md) · [Project overview](../../README.md)
 
-### **73.2% smaller across the nine bundled benchmark scenarios**
+### **73.1% smaller across the ten bundled benchmark scenarios**
 
-**75,546 B → 20,257 B** · **~16,586 estimated tokens saved** · **7/7 lossy benchmark cases restored successfully**
+**76,582 B → 20,594 B** · **~16,795 estimated tokens saved** · **8/8 lossy benchmark cases restored successfully**
 
 See the [methodology and complete results](../../BENCHMARK.md). Status: **Alpha**; API details may change before 1.0.
 
@@ -95,8 +95,9 @@ System, user, and assistant prompts are protected by default. Structured model t
 | Unified diffs | Representative hunks and change structure; lockfile and whitespace-only churn is summarized |
 | Source code | Signatures, structure, and the first five lines of complete AST statements; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
+| HTML | Main article content rendered as readable Markdown; scripts, styles, navigation, sidebars, ads, and footers are removed |
 
-Pretty JSON and repetitive logs may be reformatted losslessly. HTML currently passes through unchanged.
+Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
 
 ## Recovery
 
