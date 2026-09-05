@@ -22,7 +22,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
 逐消息 text block
   │ detectContentType ──→ json_array / build_output / search_results /
   │                      git_diff / source_code / plain_text / html /
-  │                      structured_config
+  │                      structured_config / tabular
   │ mixed_content:同一 block 内分段路由;嵌入 JSON span 递归处理
   ▼
 无损重排(JsonMinifier / LogTemplate-Drain)─≤80%─→ 短路返回
@@ -42,6 +42,7 @@ token 估算校验 ── 不达预期则回退原 block(blocksReverted)`} lang=
       <tr><td>source_code</td><td>CodeCompressor</td><td>tree-sitter AST,8 语言,保留签名及前 5 行完整语句后折叠函数体</td><td>有损(可恢复)</td></tr>
       <tr><td>html</td><td>HtmlExtractor</td><td>正文转 Markdown,移除脚本/样式/导航/侧栏/广告/页脚</td><td>有损(可恢复)</td></tr>
       <tr><td>structured_config</td><td>ConfigCompressor</td><td>YAML/TOML/INI 保留全部键值与顺序,安全卸载整行注释/空行;保护 block scalar 与多行字符串</td><td>有损(可恢复)</td></tr>
+      <tr><td>tabular</td><td>TabularCompressor</td><td>严格解析 CSV/TSV/Markdown 表格列,桥接 SmartCrusher,保留代表与异常记录</td><td>有损(可恢复)</td></tr>
     </table>
 
     <h3>共用机制</h3>

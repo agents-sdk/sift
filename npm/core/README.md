@@ -6,9 +6,9 @@
 
 English · [简体中文](README.zh-CN.md) · [Project overview](../../README.md)
 
-### **71.5% smaller across the eleven bundled benchmark scenarios**
+### **71.3% smaller across the twelve bundled benchmark scenarios**
 
-**79,280 B → 22,588 B** · **~17,006 estimated tokens saved** · **9/9 lossy benchmark cases restored successfully**
+**86,467 B → 24,846 B** · **~18,485 estimated tokens saved** · **10/10 lossy benchmark cases restored successfully**
 
 See the [methodology and complete results](../../BENCHMARK.md). Status: **Alpha**; API details may change before 1.0.
 
@@ -97,6 +97,7 @@ System, user, and assistant prompts are protected by default. Structured model t
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | HTML | Main article content rendered as readable Markdown; scripts, styles, navigation, sidebars, ads, and footers are removed |
 | YAML, TOML, and INI config | Every key/value and its order remain visible; safe whole-line comments and blank lines move to stash |
+| CSV, TSV, and Markdown tables | Strict column parsing bridged to SmartCrusher; representative and anomalous records remain visible |
 
 Pretty JSON and repetitive logs may be reformatted losslessly. Lossy HTML extraction remains exactly recoverable through stash.
 
@@ -171,7 +172,7 @@ Each instance has independent storage. Top-level functions continue to use `SIFT
 ```ts
 detectContentType(text)
 // 'json_array' | 'build_output' | 'search_results' | 'git_diff'
-// | 'source_code' | 'plain_text' | 'html' | 'structured_config'
+// | 'source_code' | 'plain_text' | 'html' | 'structured_config' | 'tabular'
 
 detectRequestFormat(body)
 // 'anthropic' | 'chat_completions' | 'responses' | 'unknown'

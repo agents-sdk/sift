@@ -106,7 +106,8 @@ export type ContentType =
   | 'source_code'
   | 'plain_text'
   | 'html'
-  | 'structured_config';
+  | 'structured_config'
+  | 'tabular';
 
 interface NativeModule {
   SiftInstance: NativeSiftConstructor;

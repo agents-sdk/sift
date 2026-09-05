@@ -18,7 +18,7 @@ crates/
       policy.rs           # AuthMode / CompressionPolicy / 缓存成本乘数
       cache_control.rs    # compute_frozen_count：冻结消息下界
       safety.rs           # tool_use/tool_result 配对保护
-      content.rs          # ContentType + detect_content_type（含 JSON、HTML、YAML/TOML/INI）
+      content.rs          # ContentType + detect_content_type（含 JSON、HTML、配置与表格）
       stash.rs              # StashStore trait + FileStashStore(落盘) / InMemoryStashStore(测试) + compute_key
       secrets.rs          # 熵检测保密（高熵候选逐次可见性校验，缺失则拒绝有损结果）
       mixed_content.rs    # 混合内容分段路由（split_into_sections）
@@ -40,6 +40,7 @@ crates/
         code_compressor.rs   # tree-sitter AST 代码压缩（8 语言，函数体保留前 5 行完整语句后折叠）
         config_compressor.rs # YAML/TOML/INI 安全注释/空行卸载（block scalar/多行字符串保护）
         tag_protector.rs  # 自定义 XML 标签保护/恢复（压缩前 protect 后 restore）
+        tabular_compressor.rs # CSV/TSV/Markdown 表格严格解析后桥接 SmartCrusher
         reformats.rs      # 无损重排：JsonMinifier + LogTemplate（Drain 模板）
       formats/           # 请求格式适配层：检测 + 三格式候选枚举
         anthropic.rs        # /v1/messages（floor = cache_control 冻结下界）
@@ -100,7 +101,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
   （按 stash 原文的 1-based 行号分片读取，单次最多 1000 行）
 - `createSift({ stashDir }) -> Sift`（创建绑定到独立 stash 目录的同构 API 实例；顶层 API
   仍按 `SIFT_STASH_DIR` / `~/.sift/stash` 使用全局 store）
-- `detectContentType(text) -> 'json_array' | 'build_output' | ... | 'structured_config'`
+- `detectContentType(text) -> 'json_array' | 'build_output' | ... | 'structured_config' | 'tabular'`
 - `detectRequestFormat(body) -> 'anthropic' | 'chat_completions' | 'responses' | 'unknown'`
 
 > token 估算不对外暴露：它在 Rust 侧 `tokenizer::EstimatingCounter`（UTF-8 字节 / 4 × 1.2）
@@ -138,6 +139,7 @@ napi build --platform --release --manifest-path ../../crates/sift-node/Cargo.tom
           SourceCode    → code_compressor（tree-sitter 8 语言）
           Html          → html_extractor（正文转 Markdown；完整 HTML 经 stash 恢复）
           StructuredConfig → config_compressor（键值/顺序保留，安全注释与空行卸载）
+          Tabular       → tabular_compressor（严格列解析 → SmartCrusher）
          混合内容路由（整块落 PlainText 时）：
            mixed_content::split_into_sections → 逐段独立分发压缩
            + recursive_json::replace_json_spans（段内嵌入 JSON span 平衡匹配替换）

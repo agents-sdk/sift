@@ -434,4 +434,44 @@ mod tests {
         assert_eq!(result.text, config);
         assert!(store.is_empty());
     }
+
+    #[test]
+    fn tabular_text_uses_smart_crusher_and_stashes_exact_original() {
+        let mut csv = String::from("id,service,region,status,owner,latency_ms\n");
+        for index in 0..120 {
+            let status = if index == 97 { "degraded" } else { "healthy" };
+            let latency = if index == 97 { 240 } else { 40 + index };
+            csv.push_str(&format!(
+                "{index},service-{index},us-east-1,{status},platform,{latency}\n"
+            ));
+        }
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(&csv, Some(&store), Some("degraded latency"));
+
+        assert!(result.changed, "{result:?}");
+        assert!(result.lossy);
+        assert!(result.text.contains("service"));
+        assert!(result.text.contains("degraded"));
+        assert!(result.text.len() < csv.len());
+        let key = result.stash_key.as_deref().unwrap();
+        assert_eq!(store.get(key).as_deref(), Some(csv.as_str()));
+    }
+
+    #[test]
+    fn ragged_table_is_not_rewritten() {
+        let mut csv = String::from("id,name,status\n");
+        for index in 0..40 {
+            if index == 20 {
+                csv.push_str("20,missing-status\n");
+            } else {
+                csv.push_str(&format!("{index},service-{index},healthy\n"));
+            }
+        }
+        let store = InMemoryStashStore::new();
+        let result = compress_text(&csv, Some(&store), None);
+        assert!(!result.changed);
+        assert_eq!(result.text, csv);
+        assert!(store.is_empty());
+    }
 }

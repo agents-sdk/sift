@@ -279,6 +279,7 @@ pub fn detect_content_type(text: String) -> String {
         ContentType::PlainText => "plain_text",
         ContentType::Html => "html",
         ContentType::StructuredConfig => "structured_config",
+        ContentType::Tabular => "tabular",
     }
     .to_string()
 }

@@ -6,9 +6,9 @@
 
 [English](README.md) · 简体中文 · [项目主页](../../README.zh-CN.md)
 
-### **11 个内置基准场景整体缩小 71.5%**
+### **12 个内置基准场景整体缩小 71.3%**
 
-**79,280 B → 22,588 B** · **估算节省约 17,006 tokens** · **9/9 个有损基准样例成功恢复**
+**86,467 B → 24,846 B** · **估算节省约 18,485 tokens** · **10/10 个有损基准样例成功恢复**
 
 测试口径与完整结果见 [BENCHMARK.md](../../BENCHMARK.md)。当前状态：**Alpha**，1.0 前 API 细节可能变化。
 
@@ -33,7 +33,7 @@ npm install @agent-context/sift
 ## 运行场景演示
 
 仓库内提供了覆盖 JSON 数组、pretty JSON、构建日志、搜索结果、git diff、混合命令
-输出、源代码、重复纯文本、独有内容保护、HTML 正文提取和结构化配置的 11 个独立用例。它通过包根目录加载 `@agent-context/sift` 的公开入口，
+输出、源代码、重复纯文本、独有内容保护、HTML 正文提取、结构化配置和表格数据的 12 个独立用例。它通过包根目录加载 `@agent-context/sift` 的公开入口，
 每个用例都会完整打印「压缩前原文」「压缩后输出」「运行指标」，并验证 stash 恢复和
 冻结前缀保护：
 
@@ -174,7 +174,7 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 
 ### `detectContentType(text)`
 
-返回内容类型：`json_array | build_output | search_results | git_diff | source_code | plain_text | html | structured_config`，便于诊断。
+返回内容类型：`json_array | build_output | search_results | git_diff | source_code | plain_text | html | structured_config | tabular`，便于诊断。
 
 ## 什么时候调用 `siftRequest`
 
@@ -190,6 +190,7 @@ tree-sitter grammar，支持 Python、JavaScript、TypeScript、Go、Rust、Java
 | git diff | `git diff` / PR diff | diff_compressor（hunk 采样） |
 | HTML | 网页抓取结果 | html_extractor（正文转 Markdown，移除页面噪声） |
 | YAML/TOML/INI | 部署清单、项目配置、服务配置 | config_compressor（保留全部键值，只卸载安全注释和空行） |
+| CSV/TSV/Markdown 表格 | 查询结果、指标列表、清单 | tabular_compressor（严格解析列后复用 SmartCrusher） |
 
 适合的接入位置：
 

@@ -12,6 +12,7 @@ mod log_context;
 pub mod reformats;
 pub mod search_compressor;
 pub mod smart_crusher;
+pub mod tabular_compressor;
 pub mod tag_protector;
 mod text_blocks;
 pub mod text_crusher;
@@ -101,6 +102,7 @@ pub fn dispatch_compressor(text: &str) -> Option<&'static str> {
         ContentType::SourceCode => Some("code_compressor"),
         ContentType::Html => Some("html_extractor"),
         ContentType::StructuredConfig => Some("config_compressor"),
+        ContentType::Tabular => Some("tabular_compressor"),
     }
 }
 
@@ -132,6 +134,9 @@ pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransf
         ContentType::StructuredConfig => Some(Box::new(config_compressor::ConfigCompressor::new(
             config_compressor::ConfigCompressorConfig::default(),
         ))),
+        ContentType::Tabular => Some(Box::new(tabular_compressor::TabularCompressor::new(
+            tabular_compressor::TabularCompressorConfig::default(),
+        ))),
     }
 }
 
@@ -148,7 +153,8 @@ pub fn reformat_for(content_type: ContentType) -> Option<Box<dyn ReformatTransfo
         | ContentType::SourceCode
         | ContentType::PlainText
         | ContentType::Html
-        | ContentType::StructuredConfig => None,
+        | ContentType::StructuredConfig
+        | ContentType::Tabular => None,
     }
 }
 
@@ -177,6 +183,7 @@ mod tests {
         assert!(compressor_for(ContentType::SourceCode).is_some());
         assert!(compressor_for(ContentType::Html).is_some());
         assert!(compressor_for(ContentType::StructuredConfig).is_some());
+        assert!(compressor_for(ContentType::Tabular).is_some());
     }
 
     #[test]

@@ -11,9 +11,10 @@
 //! 4. HTML（confidence ≥ 0.7）
 //! 5. grep/ripgrep 搜索结果（confidence ≥ 0.6）
 //! 6. 构建/测试日志（confidence ≥ 0.5）
-//! 7. YAML/TOML/INI 配置（confidence ≥ 0.6）
-//! 8. 源代码（confidence ≥ 0.5）
-//! 9. 兜底 → PlainText（confidence 0.5）
+//! 7. CSV/TSV/Markdown 表格（confidence ≥ 0.6）
+//! 8. YAML/TOML/INI 配置（confidence ≥ 0.6）
+//! 9. 源代码（confidence ≥ 0.5）
+//! 10. 兜底 → PlainText（confidence 0.5）
 
 use serde_json::Value;
 
@@ -36,6 +37,8 @@ pub enum ContentType {
     Html,
     /// YAML/TOML/INI 配置 → ConfigCompressor
     StructuredConfig,
+    /// CSV/TSV/Markdown 表格 → TabularCompressor
+    Tabular,
 }
 
 /// 单 block 参与压缩的最小字节数。
@@ -68,6 +71,9 @@ pub fn detect_content_type(text: &str) -> ContentType {
         if c >= 0.5 {
             return ContentType::BuildOutput;
         }
+    }
+    if detect_tabular_format(text).is_some() {
+        return ContentType::Tabular;
     }
     if detect_config_flavor(text).is_some() {
         return ContentType::StructuredConfig;
@@ -583,6 +589,138 @@ fn try_detect_log(text: &str) -> Option<f64> {
         return None;
     }
     Some((0.3 + ratio * 0.5 + error_matches as f64 * 0.05).min(1.0))
+}
+
+// ─── CSV/TSV/Markdown 表格 ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabularFormat {
+    Delimited(char),
+    Markdown,
+}
+
+pub(crate) fn detect_tabular_format(text: &str) -> Option<TabularFormat> {
+    let lines: Vec<&str> = text
+        .split('\n')
+        .filter(|line| !line.trim().is_empty())
+        .take(50)
+        .collect();
+    if lines.len() < 3 {
+        return None;
+    }
+    if looks_like_source_sample(&lines) {
+        return None;
+    }
+    for pair in lines.windows(2) {
+        if pair[0].contains('|') && is_markdown_separator(pair[1]) {
+            let columns = pair[0].trim().trim_matches('|').split('|').count();
+            if columns >= 2 {
+                return Some(TabularFormat::Markdown);
+            }
+        }
+    }
+
+    let mut best = None;
+    for delimiter in [',', '\t', ';', '|'] {
+        let counts: Vec<usize> = lines
+            .iter()
+            .map(|line| delimiter_count(line, delimiter))
+            .collect();
+        if counts[0] == 0 {
+            continue;
+        }
+        let mut frequencies = std::collections::BTreeMap::new();
+        for count in counts {
+            *frequencies.entry(count).or_insert(0usize) += 1;
+        }
+        let Some((common, frequency)) = frequencies
+            .into_iter()
+            .max_by_key(|(count, frequency)| (*frequency, *count))
+        else {
+            continue;
+        };
+        let consistency = frequency as f64 / lines.len() as f64;
+        let minimum = if delimiter == '\t' { 0.7 } else { 0.85 };
+        if common == 0 || consistency < minimum || looks_like_delimited_prose(&lines, delimiter) {
+            continue;
+        }
+        let score = (consistency * 1000.0) as usize + common;
+        if best.map_or(true, |(_, best_score)| score > best_score) {
+            best = Some((TabularFormat::Delimited(delimiter), score));
+        }
+    }
+    best.map(|(format, _)| format)
+}
+
+fn looks_like_source_sample(lines: &[&str]) -> bool {
+    let signals = lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            [
+                "fn ", "let ", "const ", "function ", "use ", "pub ", "class ", "import ",
+                "#include",
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+                || trimmed.contains("=>")
+                || trimmed.ends_with('{')
+                || trimmed == "}"
+        })
+        .count();
+    signals >= 2
+}
+
+fn delimiter_count(line: &str, delimiter: char) -> usize {
+    let mut quoted = false;
+    let mut count = 0usize;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            if quoted && chars.peek() == Some(&'"') {
+                chars.next();
+            } else {
+                quoted = !quoted;
+            }
+        } else if ch == delimiter && !quoted {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn looks_like_delimited_prose(lines: &[&str], delimiter: char) -> bool {
+    let sentence_enders = lines
+        .iter()
+        .filter(|line| line.trim_end().ends_with(['.', '!', '?']))
+        .count();
+    if sentence_enders as f64 / lines.len() as f64 >= 0.5 {
+        return true;
+    }
+    let mut cells = 0usize;
+    let mut words = 0usize;
+    for line in lines {
+        for cell in line.split(delimiter) {
+            cells += 1;
+            words += cell.split_whitespace().count();
+        }
+    }
+    cells > 0 && words as f64 / cells as f64 > 3.0
+}
+
+fn is_markdown_separator(line: &str) -> bool {
+    let cells: Vec<&str> = line
+        .trim()
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .collect();
+    cells.len() >= 2
+        && cells.iter().all(|cell| {
+            let dashes = cell.trim_matches(':');
+            dashes.len() >= 2 && dashes.chars().all(|ch| ch == '-')
+        })
 }
 
 // ─── YAML/TOML/INI 配置 ───────────────────────────────────────────────
@@ -1188,6 +1326,34 @@ FATAL: aborting
     fn markdown_front_matter_is_not_standalone_config() {
         let markdown = "---\ntitle: Release notes\nauthor: Sift team\ntags:\n  - release\n---\n# Changes\n\nThis document explains the release in prose.";
         assert_eq!(detect_content_type(markdown), ContentType::PlainText);
+    }
+
+    #[test]
+    fn detects_csv_tsv_and_markdown_tables() {
+        let csv = include_str!("../tests/fixtures/services.csv");
+        assert_eq!(detect_content_type(csv), ContentType::Tabular);
+
+        let tsv = "id\tservice\tstatus\n1\tapi\thealthy\n2\tworker\tdegraded\n";
+        assert_eq!(detect_content_type(tsv), ContentType::Tabular);
+
+        let markdown = "| id | service | status |\n| --- | --- | --- |\n| 1 | api | healthy |\n| 2 | worker | degraded |\n";
+        assert_eq!(detect_content_type(markdown), ContentType::Tabular);
+    }
+
+    #[test]
+    fn comma_heavy_prose_is_not_tabular() {
+        let prose = "Hello, friend, this is a complete sentence.\nToday, however, we should discuss the release.\nFinally, everyone, please record the decision.";
+        assert_eq!(detect_content_type(prose), ContentType::PlainText);
+    }
+
+    #[test]
+    fn semicolon_heavy_source_code_is_not_tabular() {
+        let mut rust = String::from("use std::collections::HashMap;\n\nfn build() -> usize {\n");
+        for index in 0..30 {
+            rust.push_str(&format!("    let value_{index} = {index};\n"));
+        }
+        rust.push_str("    value_29\n}\n");
+        assert_eq!(detect_content_type(&rust), ContentType::SourceCode);
     }
 
     // ─── 源代码 ───────────────────────────────────────────────────────

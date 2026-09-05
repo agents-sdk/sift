@@ -19,6 +19,7 @@ import { plainTextCase } from './cases/08-plain-text';
 import { uniquePlainTextCase } from './cases/09-unique-plain-text';
 import { htmlCase } from './cases/10-html';
 import { structuredConfigCase } from './cases/11-structured-config';
+import { tabularCase } from './cases/12-tabular';
 import { renderResultMarkdown, runCase } from './runner';
 import type { DemoResult } from './runner';
 import type { DemoCase } from './types';
@@ -35,6 +36,7 @@ const cases: DemoCase[] = [
   uniquePlainTextCase,
   htmlCase,
   structuredConfigCase,
+  tabularCase,
 ];
 
 const args = process.argv.slice(2);

@@ -6,9 +6,9 @@ sift comprime las salidas extensas de herramientas antes de enviarlas a un LLM. 
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · Español
 
-### **Un 71.5% menos de contexto. 17,006 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
+### **Un 71.3% menos de contexto. 18,485 tokens estimados ahorrados. Todos los benchmarks con pérdida recuperados.**
 
-Los once escenarios incluidos pasan de **79,280 B a 22,588 B**, con recuperación correcta del original en **9/9 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
+Los doce escenarios incluidos pasan de **86,467 B a 24,846 B**, con recuperación correcta del original en **10/10 casos con pérdida**. [Consulta todos los resultados.](#cuánto-puede-ahorrar)
 
 ```sh
 npm install @agent-context/sift
@@ -31,7 +31,7 @@ Las conversaciones de los agentes crecen rápidamente con logs de compilación, 
 
 sift ofrece:
 
-- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 71.5% más pequeño**, pasando de 79,280 a 22,588 bytes.
+- **Menor coste de contexto** — el conjunto de benchmarks incluido fue **un 71.3% más pequeño**, pasando de 86,467 a 24,846 bytes.
 - **Los detalles útiles primero** — prioriza errores, trazas, comandos, coincidencias relevantes y contexto estructural.
 - **Compresión recuperable** — antes de devolver un resultado con pérdida, guarda el original completo y añade un marcador `<<stash:HASH>>`.
 - **Seguridad para la caché de prompts** — no modifica los mensajes situados antes o en un ancla `cache_control` de Anthropic.
@@ -48,7 +48,7 @@ sift ofrece:
 
 ## ¿Cuánto puede ahorrar?
 
-Resultados medidos con las once [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el árbol de fuentes actual (versión del paquete `0.0.1-alpha.7`). Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
+Resultados medidos con las doce [entradas de demo](npm/core/demo/cases) deterministas del repositorio y el árbol de fuentes actual (versión del paquete `0.0.1-alpha.7`). Consulta [BENCHMARK.md](BENCHMARK.md) para ver la metodología y cómo reproducirlos:
 
 | Escenario | Entrada | Salida | Reducción | Tokens ahorrados estimados | Recuperación |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -63,7 +63,8 @@ Resultados medidos con las once [entradas de demo](npm/core/demo/cases) determin
 | Protección de datos únicos y valores sensibles | 3,125 B | 1,540 B | 50.7% | 476 | PASS |
 | Extracción del contenido HTML | 1,036 B | 337 B | 67.5% | 209 | PASS |
 | Configuración estructurada | 2,698 B | 1,994 B | 26.1% | 211 | PASS |
-| **Total** | **79,280 B** | **22,588 B** | **71.5%** | **17,006** | **9/9 casos con pérdida recuperados** |
+| Tabla CSV | 7,187 B | 2,258 B | 68.6% | 1,479 | PASS |
+| **Total** | **86,467 B** | **24,846 B** | **71.3%** | **18,485** | **10/10 casos con pérdida recuperados** |
 
 Son resultados transparentes de fixtures públicos, no una promesa para cualquier carga de trabajo. Los valores similares a credenciales permanecen visibles mientras se comprime el resto del contenido de poco valor; todos los casos con pérdida restauran el original completo. `tokensSaved` usa el estimador integrado de sift.
 
@@ -170,6 +171,7 @@ Un agente que comparta el sistema de archivos puede leer ese intervalo directame
 | Código fuente | Firmas, estructura y las primeras cinco líneas de sentencias AST completas antes de plegar el cuerpo; compatible con Python, JavaScript, TypeScript, Go, Rust, Java, C y C++ |
 | Texto plano | Selección extractiva según query, posición y relevancia, con supresión de duplicados cercanos |
 | Configuración YAML, TOML e INI | Conserva todas las claves, valores y su orden; solo traslada al stash comentarios seguros de línea completa y líneas vacías |
+| Tablas CSV, TSV y Markdown | Analiza estrictamente las columnas y reutiliza SmartCrusher, conservando registros representativos y anómalos |
 | JSON con formato y logs repetitivos | Minificación o plantillas sin pérdida cuando es suficiente |
 
 HTML extrae el contenido principal como Markdown legible y elimina scripts, estilos, navegación, barras laterales, anuncios y pies de página; el original completo se puede recuperar desde stash.

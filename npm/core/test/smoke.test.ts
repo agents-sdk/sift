@@ -263,6 +263,17 @@ assert.strictEqual(
   fs.readFileSync(globalStashFile(configResult.stashKey!), 'utf8'),
   configInput,
 );
+const csvInput = [
+  'id,service,region,status,latency_ms',
+  ...Array.from({ length: 120 }, (_, i) =>
+    `${i},service-${i},us-east-1,${i === 97 ? 'degraded' : 'healthy'},${i === 97 ? 480 : 40 + i}`,
+  ),
+].join('\n');
+assert.strictEqual(detectContentType(csvInput), 'tabular');
+const csvResult = siftText(csvInput, 'degraded latency');
+assert.ok(csvResult.changed && csvResult.lossy);
+assert.ok(csvResult.text.includes('degraded'));
+assert.strictEqual(fs.readFileSync(globalStashFile(csvResult.stashKey!), 'utf8'), csvInput);
 
 // ── OpenAI Chat Completions 格式 ──
 const chatBody = {
