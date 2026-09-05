@@ -11,8 +11,9 @@
 //! 4. HTML（confidence ≥ 0.7）
 //! 5. grep/ripgrep 搜索结果（confidence ≥ 0.6）
 //! 6. 构建/测试日志（confidence ≥ 0.5）
-//! 7. 源代码（confidence ≥ 0.5）
-//! 8. 兜底 → PlainText（confidence 0.5）
+//! 7. YAML/TOML/INI 配置（confidence ≥ 0.6）
+//! 8. 源代码（confidence ≥ 0.5）
+//! 9. 兜底 → PlainText（confidence 0.5）
 
 use serde_json::Value;
 
@@ -33,6 +34,8 @@ pub enum ContentType {
     PlainText,
     /// HTML → HtmlExtractor
     Html,
+    /// YAML/TOML/INI 配置 → ConfigCompressor
+    StructuredConfig,
 }
 
 /// 单 block 参与压缩的最小字节数。
@@ -65,6 +68,9 @@ pub fn detect_content_type(text: &str) -> ContentType {
         if c >= 0.5 {
             return ContentType::BuildOutput;
         }
+    }
+    if detect_config_flavor(text).is_some() {
+        return ContentType::StructuredConfig;
     }
     if let Some((_, c)) = try_detect_code(text) {
         if c >= 0.5 {
@@ -579,6 +585,178 @@ fn try_detect_log(text: &str) -> Option<f64> {
     Some((0.3 + ratio * 0.5 + error_matches as f64 * 0.05).min(1.0))
 }
 
+// ─── YAML/TOML/INI 配置 ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfigFlavor {
+    Yaml,
+    Toml,
+    Ini,
+}
+
+/// 保守识别结构化配置。TOML/INI 必须同时有 section 与至少两个赋值；
+/// YAML 必须以 key/list 行占主体，并且出现缩进、文档标记或多个列表项。
+pub(crate) fn detect_config_flavor(text: &str) -> Option<ConfigFlavor> {
+    let first = text.trim_start().chars().next()?;
+    if matches!(first, '{' | '<') {
+        return None;
+    }
+    let lines: Vec<&str> = text.split('\n').take(200).collect();
+    let non_empty: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if non_empty.len() < 3 {
+        return None;
+    }
+    let body: Vec<&str> = non_empty
+        .iter()
+        .copied()
+        .filter(|line| !is_config_comment(line))
+        .collect();
+    if body.len() < 3 {
+        return None;
+    }
+
+    let sections = body.iter().filter(|line| is_config_section(line)).count();
+    if sections > 0 {
+        let assignments = body
+            .iter()
+            .filter(|line| config_assignment_separator(line).is_some())
+            .count();
+        if assignments >= 2 && (sections + assignments) as f64 / body.len() as f64 >= 0.6 {
+            let ini_signal = non_empty.iter().any(|line| line.starts_with(';'))
+                || body
+                    .iter()
+                    .filter_map(|line| config_assignment_separator(line))
+                    .any(|separator| separator == ':');
+            return Some(if ini_signal {
+                ConfigFlavor::Ini
+            } else {
+                ConfigFlavor::Toml
+            });
+        }
+    }
+
+    // Markdown front matter 有闭合 fence 且后续主体不是 YAML 时不抢占。
+    if lines.first().is_some_and(|line| line.trim() == "---") {
+        if let Some(close) = lines
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take(59)
+            .find_map(|(index, line)| matches!(line.trim(), "---" | "...").then_some(index))
+        {
+            let tail: Vec<&str> = lines[close + 1..]
+                .iter()
+                .copied()
+                .filter(|line| !line.trim().is_empty())
+                .collect();
+            let tail_yaml = tail
+                .iter()
+                .filter(|line| is_yaml_key(line) || is_yaml_list(line))
+                .count();
+            if !tail.is_empty() && tail_yaml as f64 / (tail.len() as f64) < 0.3 {
+                return None;
+            }
+        }
+    }
+
+    let yaml_keys = body.iter().filter(|line| is_yaml_key(line)).count();
+    let yaml_lists = body
+        .iter()
+        .filter(|line| is_yaml_list(line) && !is_yaml_key(line))
+        .count();
+    let doc_marks = body
+        .iter()
+        .filter(|line| matches!(line.trim(), "---" | "..."))
+        .count();
+    if yaml_keys < 3 {
+        return None;
+    }
+    let share = (yaml_keys + yaml_lists + doc_marks) as f64 / body.len() as f64;
+    if share < 0.6 {
+        return None;
+    }
+    let sentence_enders = body
+        .iter()
+        .filter(|line| line.trim_end().ends_with(['.', '!', '?']))
+        .count();
+    let average_words = body
+        .iter()
+        .map(|line| line.split_whitespace().count())
+        .sum::<usize>() as f64
+        / body.len() as f64;
+    if sentence_enders as f64 / body.len() as f64 >= 0.5 || average_words > 8.0 {
+        return None;
+    }
+    let mut indents = std::collections::BTreeSet::new();
+    for line in &body {
+        if is_yaml_key(line) || is_yaml_list(line) {
+            indents.insert(line.len() - line.trim_start_matches(' ').len());
+        }
+    }
+    (indents.len() >= 2 || doc_marks > 0 || yaml_lists >= 3).then_some(ConfigFlavor::Yaml)
+}
+
+fn is_config_comment(line: &str) -> bool {
+    line.trim_start().starts_with(['#', ';'])
+}
+
+fn is_config_section(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+        return false;
+    }
+    let inner = trimmed.trim_matches(['[', ']']).trim();
+    !inner.is_empty()
+        && inner
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ".-_\"' ".contains(ch))
+}
+
+fn config_assignment_separator(line: &str) -> Option<char> {
+    let trimmed = line.trim();
+    if trimmed.starts_with('[') || trimmed.starts_with(['#', ';']) {
+        return None;
+    }
+    for separator in ['=', ':'] {
+        if let Some(index) = trimmed.find(separator) {
+            let key = trimmed[..index].trim();
+            let value = trimmed[index + 1..].trim();
+            if !key.is_empty() && !value.is_empty() && !key.contains(char::is_whitespace) {
+                return Some(separator);
+            }
+        }
+    }
+    None
+}
+
+fn is_yaml_key(line: &str) -> bool {
+    let mut trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("- ") {
+        trimmed = rest;
+    }
+    let Some(index) = trimmed.find(':') else {
+        return false;
+    };
+    let key = trimmed[..index].trim();
+    let tail = &trimmed[index + 1..];
+    !key.is_empty()
+        && (tail.is_empty() || tail.starts_with(char::is_whitespace))
+        && (key.starts_with(['\"', '\''])
+            || key
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ".-_/".contains(ch)))
+}
+
+fn is_yaml_list(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix('-')
+        .is_some_and(|tail| tail.starts_with(char::is_whitespace))
+}
+
 // ─── 源代码 ───────────────────────────────────────────────────────────
 
 /// 代码检测窗口。
@@ -992,6 +1170,24 @@ FATAL: aborting
     #[test]
     fn single_div_not_html() {
         assert_ne!(detect_content_type("<div>hello</div>"), ContentType::Html);
+    }
+
+    #[test]
+    fn detects_yaml_toml_and_ini_as_structured_config() {
+        let yaml = include_str!("../tests/fixtures/deployment_config.yaml");
+        assert_eq!(detect_content_type(yaml), ContentType::StructuredConfig);
+
+        let toml = "[package]\nname = \"sift\"\nversion = \"1.0.0\"\n\n[features]\ndefault = []\nhtml = true\n";
+        assert_eq!(detect_content_type(toml), ContentType::StructuredConfig);
+
+        let ini = "[server]\nhost = localhost\nport = 8080\n\n[cache]\nenabled = true\nttl = 300\n";
+        assert_eq!(detect_content_type(ini), ContentType::StructuredConfig);
+    }
+
+    #[test]
+    fn markdown_front_matter_is_not_standalone_config() {
+        let markdown = "---\ntitle: Release notes\nauthor: Sift team\ntags:\n  - release\n---\n# Changes\n\nThis document explains the release in prose.";
+        assert_eq!(detect_content_type(markdown), ContentType::PlainText);
     }
 
     // ─── 源代码 ───────────────────────────────────────────────────────

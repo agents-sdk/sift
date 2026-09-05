@@ -1,0 +1,68 @@
+---
+# Production deployment configuration.
+# This comment explains ownership and can be recovered from stash.
+service:
+  name: context-api
+  namespace: production
+  replicas: 4
+
+# Container settings.
+image:
+  repository: registry.example.com/context-api
+  tag: 2026.09.04
+  pullPolicy: IfNotPresent
+
+# Public HTTP endpoint.
+network:
+  port: 8080
+  protocol: TCP
+  healthPath: /healthz
+
+# Resource requests are deliberately explicit.
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2
+    memory: 2Gi
+
+# Environment values required by the service.
+environment:
+  - name: LOG_LEVEL
+    value: info
+  - name: REGION
+    value: us-east-1
+  - name: FEATURE_CACHE
+    value: enabled
+
+# Rollout policy.
+rollout:
+  strategy: RollingUpdate
+  maxUnavailable: 0
+  maxSurge: 1
+
+# Monitoring labels.
+labels:
+  owner: context-team
+  tier: backend
+  component: compression
+
+# Autoscaling remains disabled for predictable benchmarks.
+autoscaling:
+  enabled: false
+  minReplicas: 4
+  maxReplicas: 4
+
+# Retry behavior.
+retry:
+  attempts: 3
+  initialDelayMs: 250
+  maxDelayMs: 2000
+
+# Shutdown behavior.
+shutdown:
+  gracePeriodSeconds: 30
+  drainConnections: true
+
+# All comments and blank lines above are recoverable.

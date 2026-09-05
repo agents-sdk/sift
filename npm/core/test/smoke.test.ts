@@ -250,6 +250,19 @@ if (buildResult.lossy) {
 // 内容检测
 assert.strictEqual(detectContentType('[{"a":1}]'), 'json_array');
 assert.strictEqual(detectContentType('plain words'), 'plain_text');
+const configInput = `---\n# production settings\nservice:\n  name: api\n  namespace: production\n${Array.from(
+  { length: 24 },
+  (_, i) => `\n# component ${i} settings\ncomponent_${i}:\n  replicas: 3\n  port: ${8000 + i}`,
+).join('\n')}\n`;
+assert.strictEqual(detectContentType(configInput), 'structured_config');
+const configResult = siftText(configInput);
+assert.ok(configResult.changed && configResult.lossy);
+assert.ok(configResult.text.includes('component_23:'));
+assert.ok(!configResult.text.includes('component 23 settings'));
+assert.strictEqual(
+  fs.readFileSync(globalStashFile(configResult.stashKey!), 'utf8'),
+  configInput,
+);
 
 // ── OpenAI Chat Completions 格式 ──
 const chatBody = {

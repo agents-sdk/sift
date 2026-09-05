@@ -2,6 +2,7 @@
 //!
 
 pub mod code_compressor;
+pub mod config_compressor;
 pub mod diff_compressor;
 mod diff_noise;
 pub mod html_extractor;
@@ -99,6 +100,7 @@ pub fn dispatch_compressor(text: &str) -> Option<&'static str> {
         ContentType::PlainText => Some("text_crusher"),
         ContentType::SourceCode => Some("code_compressor"),
         ContentType::Html => Some("html_extractor"),
+        ContentType::StructuredConfig => Some("config_compressor"),
     }
 }
 
@@ -127,6 +129,9 @@ pub fn compressor_for(content_type: ContentType) -> Option<Box<dyn OffloadTransf
         ContentType::Html => Some(Box::new(html_extractor::HtmlExtractor::new(
             html_extractor::HtmlExtractorConfig::default(),
         ))),
+        ContentType::StructuredConfig => Some(Box::new(config_compressor::ConfigCompressor::new(
+            config_compressor::ConfigCompressorConfig::default(),
+        ))),
     }
 }
 
@@ -142,7 +147,8 @@ pub fn reformat_for(content_type: ContentType) -> Option<Box<dyn ReformatTransfo
         | ContentType::GitDiff
         | ContentType::SourceCode
         | ContentType::PlainText
-        | ContentType::Html => None,
+        | ContentType::Html
+        | ContentType::StructuredConfig => None,
     }
 }
 
@@ -170,6 +176,7 @@ mod tests {
         assert!(compressor_for(ContentType::PlainText).is_some());
         assert!(compressor_for(ContentType::SourceCode).is_some());
         assert!(compressor_for(ContentType::Html).is_some());
+        assert!(compressor_for(ContentType::StructuredConfig).is_some());
     }
 
     #[test]

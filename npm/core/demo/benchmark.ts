@@ -17,6 +17,7 @@ import { sourceCodeCase } from './cases/07-source-code';
 import { plainTextCase } from './cases/08-plain-text';
 import { uniquePlainTextCase } from './cases/09-unique-plain-text';
 import { htmlCase } from './cases/10-html';
+import { structuredConfigCase } from './cases/11-structured-config';
 import type { DemoCase } from './types';
 import type * as SiftApi from '../src/index';
 
@@ -40,6 +41,7 @@ const cases: DemoCase[] = [
   plainTextCase,
   uniquePlainTextCase,
   htmlCase,
+  structuredConfigCase,
 ];
 
 const STASH_RE = /<<stash:([0-9a-f]{24})>>/g;

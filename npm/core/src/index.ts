@@ -105,7 +105,8 @@ export type ContentType =
   | 'git_diff'
   | 'source_code'
   | 'plain_text'
-  | 'html';
+  | 'html'
+  | 'structured_config';
 
 interface NativeModule {
   SiftInstance: NativeSiftConstructor;

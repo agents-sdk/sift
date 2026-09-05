@@ -404,4 +404,34 @@ mod tests {
         let key = result.stash_key.as_deref().unwrap();
         assert_eq!(store.get(key).as_deref(), Some(html));
     }
+
+    #[test]
+    fn structured_config_elides_comments_and_stashes_exact_original() {
+        let config = include_str!("../tests/fixtures/deployment_config.yaml");
+        let store = InMemoryStashStore::new();
+
+        let result = compress_text(config, Some(&store), None);
+
+        assert!(result.changed);
+        assert!(result.lossy);
+        assert!(result.text.contains("name: context-api"));
+        assert!(result.text.contains("maxDelayMs: 2000"));
+        assert!(!result.text.contains("Production deployment configuration"));
+        assert!(result.text.contains("comment/blank lines elided"));
+        let key = result.stash_key.as_deref().unwrap();
+        assert_eq!(store.get(key).as_deref(), Some(config));
+    }
+
+    #[test]
+    fn yaml_block_scalar_is_not_elided() {
+        let config = format!(
+            "script: |\n  # This is data, not a comment.\n  echo hello\nmetadata:\n  owner: team\n  enabled: true\n{}",
+            "padding: keep-this-value\n".repeat(30)
+        );
+        let store = InMemoryStashStore::new();
+        let result = compress_text(&config, Some(&store), None);
+        assert!(!result.changed);
+        assert_eq!(result.text, config);
+        assert!(store.is_empty());
+    }
 }

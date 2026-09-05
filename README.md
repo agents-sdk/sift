@@ -6,7 +6,7 @@ sift compresses large tool outputs before they are sent to an LLM. It reduces to
 
 English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Español](README.es.md)
 
-### **73.1% less context · ~16,795 tokens saved · 8/8 lossy cases recovered**
+### **71.5% less context · ~17,006 tokens saved · 9/9 lossy cases recovered**
 
 ```sh
 npm install @agent-context/sift
@@ -42,11 +42,11 @@ Build logs, search results, diffs, source files, and JSON can quickly crowd usef
 
 ## Benchmark
 
-Ten deterministic [demo inputs](npm/core/demo/cases), measured from the current source tree (package version `0.0.1-alpha.7`):
+Eleven deterministic [demo inputs](npm/core/demo/cases), measured from the current source tree (package version `0.0.1-alpha.7`):
 
 | Input | Output | Reduction | Est. tokens saved | Lossy recovery |
 | ---: | ---: | ---: | ---: | --- |
-| 76,582 B | 20,594 B | 73.1% | 16,795 | 8/8 restored |
+| 79,280 B | 22,588 B | 71.5% | 17,006 | 9/9 restored |
 
 Credential-like values remain visible while unrelated text can still be compressed; every lossy case restores the exact original. Results vary by input and tokenizer; `tokensSaved` is an estimate. [Full breakdown and methodology →](BENCHMARK.md)
 
@@ -149,6 +149,7 @@ An agent that shares the filesystem can read that range directly. Diffs use a co
 | Source code | Signatures, structure, and the first five lines of complete AST statements before folding function bodies; supports Python, JavaScript, TypeScript, Go, Rust, Java, C, and C++ |
 | Plain text | Query-aware extractive selection using relevance, recency, salience, and near-duplicate suppression |
 | HTML | Main article content rendered as readable Markdown; scripts, styles, navigation, sidebars, ads, and footers are removed |
+| YAML, TOML, and INI config | Every key/value and its order remain visible; safe whole-line comments and blank lines are moved to the recoverable stash |
 | Pretty JSON and repetitive logs | Lossless minification or templating when that is sufficient |
 
 ## Designed for safe adoption

@@ -117,7 +117,7 @@ await fetch("/v1/messages", { method: "POST", body: JSON.stringify(body) });`} l
     <p>按 stash 原文的 1-based 行号读取连续分片,单次最多 1000 行;返回 <code>text / startLine / lineCount / totalLines / hasMore</code>。这是非本地 stash 或文件工具不可用时的备选;代码内联提示本身不要求调用这个 API。</p>
 
     <h3><code>detectContentType(text)</code> / <code>detectRequestFormat(body)</code></h3>
-    <p>类型探测:返回内容类型(JSON 对象或数组,也识别连续对象与 JSON 为主体的轻量 wrapper / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML)或请求格式(anthropic / chat_completions / responses)。</p>
+    <p>类型探测:返回内容类型(JSON 对象或数组,也识别连续对象与 JSON 为主体的轻量 wrapper / 构建日志 / 搜索结果 / git diff / 源代码 / 纯文本 / HTML / YAML、TOML、INI 结构化配置)或请求格式(anthropic / chat_completions / responses)。</p>
 
     <h2>最佳实践</h2>
     <ul>
